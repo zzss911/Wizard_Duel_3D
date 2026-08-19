@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Wizard Duel 3D · 魔法决斗</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    { "imports": { "three": "./vendor/three.module.min.js" } }
+  </script>
+</head>
+<body>
+  <div id="app"></div>
+
+  <!-- HUD：由 HUD.js 驱动 -->
+  <div id="hud">
+    <div class="hp-bar hp-player">
+      <div class="hp-label">玩家</div>
+      <div class="hp-track"><div class="hp-fill" id="hp-player-fill"></div></div>
+    </div>
+    <div class="hp-bar hp-target">
+      <div class="hp-label">敌方法师</div>
+      <div class="hp-track"><div class="hp-fill enemy" id="hp-enemy-fill"></div></div>
+      <div class="hp-label sub">训练靶</div>
+      <div class="hp-track slim"><div class="hp-fill dummy" id="hp-target-fill"></div></div>
+    </div>
+    <div id="crosshair"></div>
+    <div id="damage-layer"></div>
+    <div id="banner"></div>
+    <div id="hit-vignette"></div>
+    <div id="screen-flash"></div>
+    <div id="end-panel">
+      <div id="end-text"></div>
+      <button id="btn-restart">再来一局</button>
+    </div>
+    <div id="hint-desktop">WASD 移动 · 点击画面锁定鼠标转镜头 · 左键 / J 发射魔法弹<br>Space 闪避 · Q 爆裂咒 · E 束缚咒</div>
+    <div id="rotate-tip">建议横屏游玩，体验更佳</div>
+
+    <!-- 技能按钮（触屏显示，桌面端可点击） -->
+    <div id="btn-dodge" class="skill-btn">
+      <span class="skill-label">闪避</span>
+      <div class="skill-cd"></div>
+    </div>
+    <div id="btn-skill1" class="skill-btn">
+      <span class="skill-label">爆裂</span>
+      <div class="skill-cd"></div>
+    </div>
+    <div id="btn-skill2" class="skill-btn">
+      <span class="skill-label">束缚</span>
+      <div class="skill-cd"></div>
+    </div>
+  </div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

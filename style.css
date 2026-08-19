@@ -1,0 +1,355 @@
+/* ========== Wizard Duel 3D — HUD & 触控样式 ========== */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #0a0e1a;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+#app, #app canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ---------- HUD 通用 ---------- */
+#hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+  padding: calc(12px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right))
+           calc(12px + env(safe-area-inset-bottom)) calc(14px + env(safe-area-inset-left));
+}
+
+/* ---------- 血条 ---------- */
+.hp-bar {
+  position: absolute;
+  top: calc(14px + env(safe-area-inset-top));
+  width: min(34vw, 300px);
+}
+.hp-player { left: calc(14px + env(safe-area-inset-left)); }
+.hp-target { right: calc(14px + env(safe-area-inset-right)); text-align: right; }
+
+.hp-label {
+  color: #e8e2d0;
+  font-size: 13px;
+  letter-spacing: 2px;
+  margin-bottom: 4px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+.hp-track {
+  height: 14px;
+  border: 1px solid rgba(232, 226, 208, 0.45);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.hp-fill {
+  height: 100%;
+  width: 100%;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #3fd97e, #7bf0a8);
+  transition: width 0.15s ease-out;
+}
+.hp-fill.enemy { background: linear-gradient(90deg, #e05252, #ff8a6b); }
+.hp-fill.dummy { background: linear-gradient(90deg, #c9a44a, #e8cd7a); }
+.hp-target .hp-fill { float: right; }
+.hp-label.sub {
+  margin-top: 8px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+.hp-track.slim { height: 9px; }
+
+/* ---------- 玩家受击红边 ---------- */
+#hit-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(ellipse at center, rgba(255,0,0,0) 52%, rgba(220,30,20,0.5) 100%);
+}
+#hit-vignette.active {
+  animation: hit-vignette 0.4s ease-out;
+}
+@keyframes hit-vignette {
+  0%   { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* ---------- 胜负结算面板 ---------- */
+#end-panel {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  display: none;
+  pointer-events: auto;
+}
+#end-panel.show { display: block; }
+#end-text {
+  color: #ffe9b0;
+  font-size: clamp(34px, 7vw, 60px);
+  font-weight: 800;
+  letter-spacing: 10px;
+  text-shadow: 0 0 24px rgba(255, 190, 80, 0.85), 0 3px 6px rgba(0, 0, 0, 0.8);
+  margin-bottom: 26px;
+}
+#end-text.lose {
+  color: #ff9a8a;
+  text-shadow: 0 0 24px rgba(220, 60, 40, 0.85), 0 3px 6px rgba(0, 0, 0, 0.8);
+}
+#btn-restart {
+  min-width: 180px;
+  min-height: 48px;
+  padding: 12px 34px;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  color: #2a1a08;
+  background: linear-gradient(180deg, #ffd98a, #e8a84a);
+  border: 2px solid #ffe9b0;
+  border-radius: 26px;
+  cursor: pointer;
+  box-shadow: 0 0 18px rgba(255, 190, 80, 0.45);
+}
+#btn-restart:active { transform: scale(0.95); }
+
+/* ---------- 准星 ---------- */
+#crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  transform: translate(-50%, -50%);
+  border: 1.5px solid rgba(255, 240, 200, 0.75);
+  border-radius: 50%;
+  box-shadow: 0 0 6px rgba(255, 220, 140, 0.5);
+}
+
+/* ---------- 伤害飘字 ---------- */
+#damage-layer { position: absolute; inset: 0; overflow: hidden; }
+.dmg-num {
+  position: absolute;
+  color: #ffd76a;
+  font-weight: 700;
+  font-size: 20px;
+  text-shadow: 0 0 6px rgba(255, 150, 40, 0.9), 0 2px 2px rgba(0, 0, 0, 0.7);
+  transform: translate(-50%, -50%);
+  animation: dmg-float 0.7s ease-out forwards;
+}
+@keyframes dmg-float {
+  0%   { opacity: 1; margin-top: 0; }
+  100% { opacity: 0; margin-top: -46px; }
+}
+
+/* ---------- 中央横幅 ---------- */
+#banner {
+  position: absolute;
+  left: 50%;
+  top: 34%;
+  transform: translate(-50%, -50%);
+  color: #ffe9b0;
+  font-size: clamp(26px, 5vw, 44px);
+  font-weight: 700;
+  letter-spacing: 6px;
+  text-shadow: 0 0 18px rgba(255, 190, 80, 0.8), 0 2px 4px rgba(0, 0, 0, 0.8);
+  opacity: 0;
+  transition: opacity 0.25s;
+  white-space: nowrap;
+}
+#banner.show { opacity: 1; }
+
+/* ---------- 全屏命中闪光（50~100ms 快速淡出） ---------- */
+#screen-flash {
+  position: absolute;
+  inset: 0;
+  background: #fff6dc;
+  opacity: 0;
+  pointer-events: none;
+}
+#screen-flash.active {
+  animation: screen-flash 0.09s ease-out;
+}
+@keyframes screen-flash {
+  0%   { opacity: 0.26; }
+  100% { opacity: 0; }
+}
+
+/* ---------- 桌面操作提示 ---------- */
+#hint-desktop {
+  position: absolute;
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  color: rgba(232, 226, 208, 0.55);
+  font-size: 12px;
+  letter-spacing: 1px;
+  white-space: nowrap;
+}
+
+/* ---------- 竖屏提示（仅触屏设备显示） ---------- */
+#rotate-tip {
+  display: none;
+  position: absolute;
+  left: 50%;
+  top: 12%;
+  transform: translateX(-50%);
+  color: rgba(255, 233, 176, 0.85);
+  font-size: 14px;
+  letter-spacing: 2px;
+  background: rgba(0, 0, 0, 0.45);
+  padding: 8px 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 233, 176, 0.3);
+}
+@media (pointer: coarse) and (orientation: portrait) {
+  #rotate-tip { display: block; }
+}
+@media (pointer: coarse) {
+  #hint-desktop { display: none; }
+}
+
+/* ---------- 触控控件（由 Input.js 创建，仅触屏可见） ---------- */
+.touch-ui { display: none; }
+@media (pointer: coarse) {
+  .touch-ui { display: block; }
+}
+
+#joystick {
+  position: fixed;
+  z-index: 20;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  border: 2px solid rgba(232, 226, 208, 0.35);
+  background: rgba(255, 255, 255, 0.06);
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+#joystick .knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: rgba(255, 233, 176, 0.35);
+  border: 2px solid rgba(255, 233, 176, 0.6);
+  transform: translate(-50%, -50%);
+}
+
+#btn-fire {
+  position: fixed;
+  z-index: 20;
+  right: calc(26px + env(safe-area-inset-right));
+  bottom: calc(34px + env(safe-area-inset-bottom));
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 210, 120, 0.65);
+  background: radial-gradient(circle at 35% 30%, rgba(255, 200, 100, 0.4), rgba(160, 80, 20, 0.35));
+  color: #ffe9b0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  touch-action: none;
+}
+@media (pointer: coarse) {
+  #btn-fire { display: flex; }
+}
+#btn-fire.pressed {
+  background: radial-gradient(circle at 35% 30%, rgba(255, 230, 150, 0.65), rgba(200, 110, 30, 0.55));
+  transform: scale(0.94);
+}
+
+/* ---------- 技能按钮（闪避 / 爆裂咒 / 束缚咒） ---------- */
+.skill-btn {
+  position: fixed;
+  z-index: 20;
+  bottom: calc(34px + env(safe-area-inset-bottom));
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 210, 120, 0.55);
+  background: radial-gradient(circle at 35% 30%, rgba(80, 140, 220, 0.35), rgba(20, 40, 80, 0.4));
+  color: #dde8ff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  touch-action: none;
+  overflow: hidden;
+  user-select: none;
+}
+@media (pointer: coarse) {
+  .skill-btn { display: flex; }
+}
+/* 桌面端也显示技能按钮（小一些） */
+@media (pointer: fine) {
+  .skill-btn {
+    display: flex;
+    width: 52px;
+    height: 52px;
+    font-size: 11px;
+    opacity: 0.85;
+  }
+}
+#btn-dodge {
+  right: calc(130px + env(safe-area-inset-right));
+  border-color: rgba(120, 200, 255, 0.55);
+  background: radial-gradient(circle at 35% 30%, rgba(80, 160, 230, 0.35), rgba(20, 50, 90, 0.4));
+}
+#btn-skill1 {
+  right: calc(200px + env(safe-area-inset-right));
+  border-color: rgba(255, 160, 60, 0.6);
+  background: radial-gradient(circle at 35% 30%, rgba(230, 130, 40, 0.35), rgba(90, 40, 10, 0.4));
+}
+#btn-skill2 {
+  right: calc(270px + env(safe-area-inset-right));
+  border-color: rgba(180, 100, 255, 0.6);
+  background: radial-gradient(circle at 35% 30%, rgba(150, 80, 220, 0.35), rgba(50, 20, 80, 0.4));
+}
+.skill-btn.pressed {
+  transform: scale(0.92);
+  filter: brightness(1.4);
+}
+.skill-label {
+  position: relative;
+  z-index: 2;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.7);
+}
+/* 冷却遮罩：从下往上收缩 */
+.skill-cd {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  border-radius: 50%;
+  transform: scaleY(0);
+  transform-origin: bottom;
+  transition: transform 0.1s linear;
+  z-index: 1;
+}
+.skill-btn.ready .skill-cd { transform: scaleY(0); }
