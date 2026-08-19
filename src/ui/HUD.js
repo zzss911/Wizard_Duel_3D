@@ -15,7 +15,10 @@ export class HUD {
     this.vignette = document.getElementById('hit-vignette');
     this.endPanel = document.getElementById('end-panel');
     this.endText = document.getElementById('end-text');
+    this.endMeta = document.getElementById('end-meta');
     this.restartBtn = document.getElementById('btn-restart');
+    this.nextDiffBtn = document.getElementById('btn-next-difficulty');
+    this.mainMenuBtn = document.getElementById('btn-main-menu');
 
     // 技能冷却 UI
     this.skillBtns = {
@@ -106,13 +109,43 @@ export class HUD {
     this._bannerTimer = setTimeout(() => this.banner.classList.remove('show'), seconds * 1000);
   }
 
-  showEnd(win, onRestart) {
+  showEnd({ win, difficulty, winStreak, onRestart, onNextDifficulty, onMainMenu }) {
+    const DIFF_LABELS = { rookie: '新手', normal: '普通', hard: '高手' };
+    const diffLabel = DIFF_LABELS[difficulty] || difficulty;
+
     this.endText.textContent = win ? '胜  利' : '失  败';
     this.endText.classList.toggle('lose', !win);
+
+    // 难度 + 连胜信息
+    if (win) {
+      this.endMeta.textContent = `当前难度：${diffLabel}\n连胜：${winStreak}`;
+    } else {
+      this.endMeta.textContent = `当前难度：${diffLabel}`;
+    }
+    this.endMeta.style.whiteSpace = 'pre-line';
+
+    // 挑战更高难度按钮：仅胜利且非 hard 时显示
+    if (win && difficulty !== 'hard') {
+      const nextLabel = difficulty === 'rookie' ? '挑战普通难度' : '挑战高手难度';
+      this.nextDiffBtn.textContent = nextLabel;
+      this.nextDiffBtn.style.display = '';
+    } else {
+      this.nextDiffBtn.style.display = 'none';
+    }
+
     this.endPanel.classList.add('show');
+
     this.restartBtn.onclick = () => {
       this.hideEnd();
       onRestart && onRestart();
+    };
+    this.nextDiffBtn.onclick = () => {
+      this.hideEnd();
+      onNextDifficulty && onNextDifficulty();
+    };
+    this.mainMenuBtn.onclick = () => {
+      this.hideEnd();
+      onMainMenu && onMainMenu();
     };
   }
 

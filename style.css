@@ -107,17 +107,30 @@ html, body {
   font-weight: 800;
   letter-spacing: 10px;
   text-shadow: 0 0 24px rgba(255, 190, 80, 0.85), 0 3px 6px rgba(0, 0, 0, 0.8);
-  margin-bottom: 26px;
+  margin-bottom: 16px;
 }
 #end-text.lose {
   color: #ff9a8a;
   text-shadow: 0 0 24px rgba(220, 60, 40, 0.85), 0 3px 6px rgba(0, 0, 0, 0.8);
 }
-#btn-restart {
-  min-width: 180px;
+#end-meta {
+  color: rgba(232, 226, 208, 0.85);
+  font-size: 15px;
+  letter-spacing: 2px;
+  line-height: 2;
+  margin-bottom: 26px;
+}
+.end-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+}
+.end-actions button {
+  min-width: 200px;
   min-height: 48px;
   padding: 12px 34px;
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 700;
   letter-spacing: 4px;
   color: #2a1a08;
@@ -125,9 +138,27 @@ html, body {
   border: 2px solid #ffe9b0;
   border-radius: 26px;
   cursor: pointer;
-  box-shadow: 0 0 18px rgba(255, 190, 80, 0.45);
+  box-shadow: 0 0 18px rgba(255, 190, 80, 0.35);
 }
-#btn-restart:active { transform: scale(0.95); }
+.end-actions button:active { transform: scale(0.95); }
+#btn-next-difficulty {
+  background: linear-gradient(180deg, #c8b0ff, #8a64df);
+  border-color: #d0c0ff;
+  box-shadow: 0 0 18px rgba(150, 100, 255, 0.35);
+}
+#btn-main-menu {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(232, 226, 208, 0.35);
+  color: rgba(232, 226, 208, 0.8);
+  box-shadow: none;
+}
+@media (pointer: coarse) {
+  .end-actions button {
+    min-width: 240px;
+    min-height: 56px;
+    font-size: 18px;
+  }
+}
 
 /* ---------- 准星 ---------- */
 #crosshair {

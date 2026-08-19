@@ -69,6 +69,7 @@ export class Game {
     this.countdownTimer = 0;
     this.graceTimer = 0;
     this.difficulty = 'rookie';
+    this.winStreak = 0;
 
     // ---------- 新手训练 ----------
     this.tutorialStep = 0;
@@ -499,7 +500,56 @@ export class Game {
     this.enemy.setCastGlow(0);
     // 清空所有残余弹道，防止死后继续造成伤害
     for (const p of this.combat.pool) p.despawn();
-    this.hud.showEnd(win, () => this.restart());
+
+    // 连胜计数
+    if (win) {
+      this.winStreak++;
+    } else {
+      this.winStreak = 0;
+    }
+
+    // 释放鼠标，让玩家点击结算按钮
+    if (document.pointerLockElement) {
+      document.exitPointerLock?.();
+    }
+
+    this.hud.showEnd({
+      win,
+      difficulty: this.difficulty,
+      winStreak: this.winStreak,
+      onRestart: () => this.restart(),
+      onNextDifficulty: () => this.nextDifficulty(),
+      onMainMenu: () => this.returnToMainMenu(),
+    });
+  }
+
+  /** 挑战更高难度：rookie→normal, normal→hard */
+  nextDifficulty() {
+    if (this.difficulty === 'rookie') {
+      this.difficulty = 'normal';
+    } else if (this.difficulty === 'normal') {
+      this.difficulty = 'hard';
+    }
+    this.restart();
+  }
+
+  /** 返回主菜单：重置一切，显示开始界面 */
+  returnToMainMenu() {
+    this.gameOver = false;
+    this.phase = GAME_PHASE.READY;
+    this.winStreak = 0;
+    this.player.reset();
+    this.enemy.reset();
+    this.enemyAI.reset();
+    this.target._revive();
+    this.enemy.group.visible = false;
+    for (const p of this.combat.pool) p.despawn();
+    for (const t of this.traps.traps) t.hide();
+    this.traps.cooldown = 4.5;
+    this.input.setGameplayEnabled(false);
+    this.hud.hideEnd();
+    this.hud.showStart(difficulty => this.startDuel(difficulty));
+    this.hud.showRetryTutorial(() => this._beginTutorial());
   }
 
   restart() {
