@@ -19,6 +19,7 @@ export class Input {
     this._dragging = false;
     this._lastMouse = { x: 0, y: 0 };
     this._actions = { dodge: false, skill1: false, skill2: false };
+    this.gameplayEnabled = false;
 
     // 虚拟摇杆状态
     this.joy = { active: false, id: -1, ox: 0, oy: 0, dx: 0, dy: 0 };
@@ -226,7 +227,22 @@ export class Input {
   }
 
   /* ---------------- 对外抽象接口 ---------------- */
+
+  setGameplayEnabled(enabled) {
+    this.gameplayEnabled = enabled;
+    if (!enabled) {
+      this._attackHeld = false;
+      this._actions.dodge = false;
+      this._actions.skill1 = false;
+      this._actions.skill2 = false;
+      this.keys = Object.create(null);
+      this.joy.dx = 0;
+      this.joy.dy = 0;
+    }
+  }
+
   getMoveVector() {
+    if (!this.gameplayEnabled) return { x: 0, y: 0 };
     let x = 0, y = 0;
     if (this.keys['KeyW'] || this.keys['ArrowUp']) y += 1;
     if (this.keys['KeyS'] || this.keys['ArrowDown']) y -= 1;
@@ -251,11 +267,15 @@ export class Input {
   }
 
   isAttackHeld() {
-    return this._attackHeld;
+    return this.gameplayEnabled && this._attackHeld;
   }
 
   /** 边沿触发动作：'dodge' / 'skill1' / 'skill2'，读取后自动清除 */
   consumeAction(name) {
+    if (!this.gameplayEnabled) {
+      this._actions[name] = false;
+      return false;
+    }
     const v = this._actions[name];
     this._actions[name] = false;
     return v;

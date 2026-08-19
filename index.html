@@ -51,6 +51,43 @@
     </div>
   </div>
 
+  <!-- 开始界面 -->
+  <div id="start-panel">
+    <div class="start-card">
+      <h1>WIZARD DUEL 3D</h1>
+      <h2>魔法决斗</h2>
+      <div class="control-guide" id="control-guide-desktop">
+        <p>WASD：移动</p>
+        <p>鼠标：观察 / 瞄准</p>
+        <p>左键 / J：普通魔法</p>
+        <p>Space：闪避</p>
+        <p>Q：爆裂咒</p>
+        <p>E：束缚咒</p>
+      </div>
+      <div class="control-guide" id="control-guide-mobile" style="display:none">
+        <p>左侧拖动：移动</p>
+        <p>右侧滑动：观察</p>
+        <p>攻击按钮：普通魔法</p>
+        <p>闪避按钮：快速躲避</p>
+      </div>
+      <div class="difficulty-select">
+        <button data-difficulty="rookie" class="selected">新手</button>
+        <button data-difficulty="normal">普通</button>
+        <button data-difficulty="hard">高手</button>
+      </div>
+      <button id="btn-start-duel">开始决斗</button>
+      <button id="btn-retry-tutorial" style="display:none">重新训练</button>
+    </div>
+  </div>
+
+  <!-- 倒计时 HUD -->
+  <div id="duel-countdown"></div>
+
+  <!-- 新手训练覆盖层 -->
+  <div id="tutorial-overlay">
+    <div id="tutorial-text"></div>
+  </div>
+
   <script type="module" src="src/main.js"></script>
 </body>
 </html>

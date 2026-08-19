@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 /**
  * HUD —— 血条 / 准星 / 伤害飘字 / 横幅 / 受击红边 / 胜负结算
- * 只读取状态并更新表现，不含任何战斗逻辑。
+ * 开始界面 / 倒计时 / 新手训练提示
  */
 export class HUD {
   constructor() {
@@ -24,6 +24,25 @@ export class HUD {
       skill2: { el: document.getElementById('btn-skill2'), cd: document.querySelector('#btn-skill2 .skill-cd') },
     };
 
+    // 开始界面
+    this.startPanel = document.getElementById('start-panel');
+    this.startBtn = document.getElementById('btn-start-duel');
+    this.retryTutorialBtn = document.getElementById('btn-retry-tutorial');
+    this.countdown = document.getElementById('duel-countdown');
+
+    // 新手训练
+    this.tutorialOverlay = document.getElementById('tutorial-overlay');
+    this.tutorialText = document.getElementById('tutorial-text');
+
+    // 切换桌面/手机操作说明
+    const isTouch = window.matchMedia('(pointer: coarse)').matches;
+    const guideDesktop = document.getElementById('control-guide-desktop');
+    const guideMobile = document.getElementById('control-guide-mobile');
+    if (isTouch && guideDesktop && guideMobile) {
+      guideDesktop.style.display = 'none';
+      guideMobile.style.display = 'inline-block';
+    }
+
     this._bannerTimer = null;
     this._v = new THREE.Vector3();
   }
@@ -39,7 +58,6 @@ export class HUD {
     this._updateSkillCd('skill2', player.skill2Cd, player.skill2CdMax);
   }
 
-  /** 更新技能冷却遮罩：cd>0 时从底部覆盖到顶部比例 */
   _updateSkillCd(name, cd, cdMax) {
     const s = this.skillBtns[name];
     if (!s || !s.cd) return;
@@ -52,10 +70,9 @@ export class HUD {
     }
   }
 
-  /** 世界坐标 -> 屏幕飘字 */
   spawnDamageNumber(worldPos, amount, camera) {
     this._v.copy(worldPos).project(camera);
-    if (this._v.z > 1) return; // 在摄像机背后
+    if (this._v.z > 1) return;
     const x = (this._v.x * 0.5 + 0.5) * window.innerWidth;
     const y = (-this._v.y * 0.5 + 0.5) * window.innerHeight;
 
@@ -68,15 +85,13 @@ export class HUD {
     setTimeout(() => el.remove(), 750);
   }
 
-  /** 全屏短闪光：50~100ms 快速淡出 */
   screenFlash() {
     if (!this.flash) return;
     this.flash.classList.remove('active');
-    void this.flash.offsetWidth; // 重启动画
+    void this.flash.offsetWidth;
     this.flash.classList.add('active');
   }
 
-  /** 玩家受击：屏幕边缘泛红 */
   playerHitFlash() {
     if (!this.vignette) return;
     this.vignette.classList.remove('active');
@@ -91,7 +106,6 @@ export class HUD {
     this._bannerTimer = setTimeout(() => this.banner.classList.remove('show'), seconds * 1000);
   }
 
-  /** 胜负结算：win=true 胜利 / false 失败；onRestart 绑定重开按钮 */
   showEnd(win, onRestart) {
     this.endText.textContent = win ? '胜  利' : '失  败';
     this.endText.classList.toggle('lose', !win);
@@ -104,5 +118,65 @@ export class HUD {
 
   hideEnd() {
     this.endPanel.classList.remove('show');
+  }
+
+  /* ---------- 开始界面 ---------- */
+
+  showStart(onStart) {
+    this.startPanel.classList.add('show');
+
+    // 难度选择
+    const btns = this.startPanel.querySelectorAll('[data-difficulty]');
+    btns.forEach((b) => {
+      b.onclick = () => {
+        btns.forEach((x) => x.classList.remove('selected'));
+        b.classList.add('selected');
+      };
+    });
+
+    this.startBtn.onclick = () => {
+      const selected = this.startPanel.querySelector('[data-difficulty].selected');
+      const difficulty = selected?.dataset.difficulty || 'rookie';
+      this.hideStart();
+      onStart(difficulty);
+    };
+  }
+
+  hideStart() {
+    this.startPanel.classList.remove('show');
+  }
+
+  showRetryTutorial(onRetry) {
+    if (!this.retryTutorialBtn) return;
+    this.retryTutorialBtn.style.display = 'block';
+    this.retryTutorialBtn.onclick = () => {
+      this.retryTutorialBtn.style.display = 'none';
+      this.hideStart();
+      onRetry();
+    };
+  }
+
+  /* ---------- 倒计时 ---------- */
+
+  showCountdown(text) {
+    this.countdown.textContent = text;
+    this.countdown.classList.remove('show');
+    void this.countdown.offsetWidth;
+    this.countdown.classList.add('show');
+  }
+
+  hideCountdown() {
+    this.countdown.classList.remove('show');
+  }
+
+  /* ---------- 新手训练 ---------- */
+
+  showTutorial(text) {
+    this.tutorialText.textContent = text;
+    this.tutorialOverlay.classList.add('show');
+  }
+
+  hideTutorial() {
+    this.tutorialOverlay.classList.remove('show');
   }
 }

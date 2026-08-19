@@ -28,6 +28,7 @@ export class Player {
     this._dodgeDist = 3.2;
     this._dodgeDir = new THREE.Vector3();
     this._invulnT = 0;                 // 无敌窗口
+    this._hitInvulnT = 0;              // 受击保护窗口（0.5s）
 
     // ---- 技能冷却 ----
     this.skill1CdMax = 6;              // 爆裂咒
@@ -76,7 +77,7 @@ export class Player {
 
   /** 是否处于闪避无敌窗口（CombatSystem 命中判定时查询） */
   get isInvincible() {
-    return this._invulnT > 0;
+    return this._invulnT > 0 || this._hitInvulnT > 0;
   }
 
   /**
@@ -122,6 +123,7 @@ export class Player {
     this.skill1Cd = Math.max(0, this.skill1Cd - dt);
     this.skill2Cd = Math.max(0, this.skill2Cd - dt);
     this._invulnT = Math.max(0, this._invulnT - dt);
+    this._hitInvulnT = Math.max(0, this._hitInvulnT - dt);
     if (this._flash > 0) {
       this._flash -= dt;
       this.bodyMat.emissive.setHex(this._flash > 0 ? 0xff5040 : 0x000000);
@@ -180,6 +182,7 @@ export class Player {
     if (this.dead) return;
     this.hp = Math.max(0, this.hp - amount);
     this._flash = 0.18;
+    this._hitInvulnT = 0.5;
     if (this.hp <= 0) this.die();
   }
 
@@ -199,6 +202,7 @@ export class Player {
     this.skill2Cd = 0;
     this._dodgeT = 0;
     this._invulnT = 0;
+    this._hitInvulnT = 0;
     this.position.copy(this.spawnPosition);
     this._facing = Math.PI;
     this.group.rotation.set(0, this._facing, 0);

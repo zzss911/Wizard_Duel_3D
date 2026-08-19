@@ -353,3 +353,152 @@ html, body {
   z-index: 1;
 }
 .skill-btn.ready .skill-cd { transform: scaleY(0); }
+
+/* ---------- 开始界面 ---------- */
+#start-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at center, rgba(10, 14, 26, 0.92) 40%, rgba(10, 14, 26, 0.98) 100%);
+  pointer-events: auto;
+}
+#start-panel.show { display: flex; }
+
+.start-card {
+  text-align: center;
+  padding: 36px 48px;
+  max-width: 440px;
+}
+.start-card h1 {
+  font-size: clamp(28px, 6vw, 44px);
+  font-weight: 800;
+  letter-spacing: 6px;
+  color: #ffe9b0;
+  text-shadow: 0 0 24px rgba(255, 190, 80, 0.6), 0 2px 6px rgba(0,0,0,0.8);
+  margin-bottom: 4px;
+}
+.start-card h2 {
+  font-size: clamp(16px, 3vw, 22px);
+  font-weight: 400;
+  letter-spacing: 8px;
+  color: rgba(232, 226, 208, 0.7);
+  margin-bottom: 28px;
+}
+.control-guide {
+  text-align: left;
+  display: inline-block;
+  margin-bottom: 24px;
+}
+.control-guide p {
+  color: rgba(232, 226, 208, 0.8);
+  font-size: 14px;
+  line-height: 2.1;
+  letter-spacing: 1px;
+}
+.difficulty-select {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-bottom: 28px;
+}
+.difficulty-select button {
+  padding: 8px 22px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  color: rgba(232, 226, 208, 0.6);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(232, 226, 208, 0.25);
+  border-radius: 20px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.difficulty-select button:hover {
+  color: #ffe9b0;
+  border-color: rgba(255, 233, 176, 0.5);
+}
+.difficulty-select button.selected {
+  color: #2a1a08;
+  background: linear-gradient(180deg, #ffd98a, #e8a84a);
+  border-color: #ffe9b0;
+}
+#btn-start-duel {
+  min-width: 200px;
+  min-height: 52px;
+  padding: 14px 40px;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 6px;
+  color: #2a1a08;
+  background: linear-gradient(180deg, #ffd98a, #e8a84a);
+  border: 2px solid #ffe9b0;
+  border-radius: 28px;
+  cursor: pointer;
+  box-shadow: 0 0 20px rgba(255, 190, 80, 0.4);
+}
+#btn-start-duel:active { transform: scale(0.96); }
+#btn-retry-tutorial {
+  display: block;
+  margin: 16px auto 0;
+  padding: 6px 18px;
+  font-size: 13px;
+  color: rgba(232, 226, 208, 0.5);
+  background: transparent;
+  border: 1px solid rgba(232, 226, 208, 0.2);
+  border-radius: 16px;
+  cursor: pointer;
+}
+
+/* ---------- 倒计时 ---------- */
+#duel-countdown {
+  position: fixed;
+  left: 50%;
+  top: 38%;
+  transform: translate(-50%, -50%);
+  z-index: 50;
+  font-size: clamp(64px, 14vw, 120px);
+  font-weight: 800;
+  letter-spacing: 4px;
+  color: #ffe9b0;
+  text-shadow: 0 0 40px rgba(255, 190, 80, 0.8), 0 4px 12px rgba(0,0,0,0.9);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+#duel-countdown.show {
+  opacity: 1;
+  animation: countdown-pop 0.3s ease-out;
+}
+@keyframes countdown-pop {
+  0%   { transform: translate(-50%, -50%) scale(1.6); opacity: 0; }
+  50%  { transform: translate(-50%, -50%) scale(1.0); opacity: 1; }
+  100% { transform: translate(-50%, -50%) scale(1.0); opacity: 1; }
+}
+
+/* ---------- 新手训练覆盖层 ---------- */
+#tutorial-overlay {
+  position: fixed;
+  left: 50%;
+  bottom: calc(120px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 50;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s;
+}
+#tutorial-overlay.show { opacity: 1; }
+#tutorial-text {
+  color: #ffe9b0;
+  font-size: clamp(18px, 4vw, 26px);
+  font-weight: 600;
+  letter-spacing: 3px;
+  text-shadow: 0 0 16px rgba(255, 190, 80, 0.6), 0 2px 6px rgba(0,0,0,0.8);
+  background: rgba(0, 0, 0, 0.5);
+  padding: 12px 32px;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 233, 176, 0.3);
+  white-space: nowrap;
+}
