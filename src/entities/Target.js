@@ -9,6 +9,7 @@ import * as THREE from 'three';
 export class Target {
   constructor(scene) {
     this.scene = scene;
+    this.isTarget = true;
 
     this.maxHp = 100;
     this.hp = this.maxHp;

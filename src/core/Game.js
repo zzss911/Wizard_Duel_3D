@@ -61,6 +61,9 @@ export class Game {
     this.gameOver = false;
     this.combatants = [this.player, this.target, this.enemy];
 
+    // 防回归：确保 Target 类携带身份标识
+    console.assert(this.target.isTarget === true, 'Target.isTarget must be true');
+
     // ---------- 游戏阶段 ----------
     this.phase = GAME_PHASE.READY;
     this.countdownTimer = 0;
