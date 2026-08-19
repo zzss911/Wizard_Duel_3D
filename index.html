@@ -93,6 +93,57 @@
     <div id="tutorial-text"></div>
   </div>
 
+  <!-- 主界面 -->
+  <div id="main-menu">
+    <div class="game-title">魔法战斗</div>
+    <div class="boss-entry">
+      <button id="btn-boss-mode">
+        <span class="boss-icon">☠</span>
+        <span>进入 Boss 局</span>
+      </button>
+    </div>
+    <div class="main-menu-actions">
+      <button id="btn-menu-duel">开始决斗</button>
+      <button id="btn-menu-continue">继续游戏</button>
+      <button id="btn-menu-settings">设置</button>
+    </div>
+  </div>
+
+  <!-- Boss 占位页面 -->
+  <div id="boss-preview-panel">
+    <h1>Boss 挑战</h1>
+    <p>强大的敌人正在苏醒……</p>
+    <button disabled>即将开放</button>
+    <button id="btn-boss-back">返回主界面</button>
+  </div>
+
+  <!-- 设置面板 -->
+  <div id="settings-panel">
+    <div class="settings-card">
+      <h2>设置</h2>
+      <div class="settings-row">
+        <span class="settings-label">音效</span>
+        <button id="toggle-sound" class="toggle-btn">开</button>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">音量</span>
+        <input type="range" id="volume-slider" min="0" max="1" step="0.05" value="0.6">
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">画质</span>
+        <div class="quality-select">
+          <button class="quality-btn" data-quality="low">低</button>
+          <button class="quality-btn" data-quality="medium">中</button>
+          <button class="quality-btn" data-quality="high">高</button>
+        </div>
+      </div>
+      <button id="btn-settings-back" class="settings-back">返回</button>
+    </div>
+  </div>
+
+  <!-- 继续游戏提示 -->
+  <div id="continue-toast">暂无可继续的游戏</div>
+
   <script type="module" src="src/main.js"></script>
 </body>
 </html>

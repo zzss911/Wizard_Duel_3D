@@ -63,6 +63,20 @@ export class MagicAudio {
     if (this.ctx.state === 'suspended') this.ctx.resume();
   }
 
+  setVolume(v) {
+    this._volume = v;
+    if (this.master && this._enabled !== false) {
+      this.master.gain.value = 0.9 * v;
+    }
+  }
+
+  setEnabled(on) {
+    this._enabled = on;
+    if (this.master) {
+      this.master.gain.value = on ? 0.9 * (this._volume || 0.6) : 0;
+    }
+  }
+
   _noise(dst, t0, { hp = 0, lp = 20000, lpEnd = 0, gain = 0.5, dur = 0.3, echo = 0 }) {
     const src = this.ctx.createBufferSource();
     src.buffer = this._noiseBuffer;

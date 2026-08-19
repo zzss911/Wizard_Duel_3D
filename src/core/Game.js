@@ -17,8 +17,11 @@ import { TargetImpactExplosion } from '../fx/TargetImpactExplosion.js';
 import { MagicAudio } from '../fx/MagicAudio.js';
 import { CameraShake } from '../systems/CameraShake.js';
 import { HUD } from '../ui/HUD.js';
+import { MainMenu } from '../ui/MainMenu.js';
+import { SettingsPanel } from '../ui/SettingsPanel.js';
 
 const GAME_PHASE = {
+  MAIN_MENU: 'main_menu',
   READY: 'ready',
   TUTORIAL: 'tutorial',
   COUNTDOWN: 'countdown',
@@ -56,6 +59,8 @@ export class Game {
     this.enemy = new Enemy(this.scene);
     this.enemyAI = new EnemyAI(this.enemy, this.combat);
     this.hud = new HUD();
+    this.mainMenu = new MainMenu();
+    this.settingsPanel = new SettingsPanel();
     this.audio = new MagicAudio();
     this.isMobile = this.input.isTouch;
     this.gameOver = false;
@@ -65,7 +70,7 @@ export class Game {
     console.assert(this.target.isTarget === true, 'Target.isTarget must be true');
 
     // ---------- 游戏阶段 ----------
-    this.phase = GAME_PHASE.READY;
+    this.phase = GAME_PHASE.MAIN_MENU;
     this.countdownTimer = 0;
     this.graceTimer = 0;
     this.difficulty = 'rookie';
@@ -180,8 +185,53 @@ export class Game {
 
     // ---------- 启动流程 ----------
     this.input.setGameplayEnabled(false);
-    this.enemy.group.visible = false; // 初始隐藏敌人
+    this.enemy.group.visible = false;
 
+    // 主菜单摄像机初始化
+    this._menuTime = 0;
+    this._menuCamPos = new THREE.Vector3();
+
+    // 设置面板回调
+    this.settingsPanel.setCallbacks({
+      onBack: () => this.mainMenu.show(),
+      onVolumeChange: ({ soundOn, volume }) => {
+        this.audio.setVolume(volume);
+        this.audio.setEnabled(soundOn);
+      },
+      onQualityChange: (quality) => this._applyQuality(quality),
+    });
+
+    // 主菜单按钮回调
+    this.mainMenu.setCallbacks({
+      onDuel: () => this._handleStartDuel(),
+      onContinue: () => this.mainMenu.showContinueToast(),
+      onSettings: () => this.settingsPanel.show(),
+      onBoss: () => this.mainMenu.showBossPreview(),
+    });
+
+    // 应用已保存的设置
+    const savedSettings = this.settingsPanel.getSettings();
+    this._applyQuality(savedSettings.quality);
+
+    this.mainMenu.show();
+  }
+
+  _applyQuality(quality) {
+    if (quality === 'low') {
+      this.renderer.setPixelRatio(1);
+      if (this.composer) { this.composer.enabled = false; }
+    } else if (quality === 'medium') {
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
+      if (this.composer) { this.composer.enabled = true; }
+      if (this.bloomPass) { this.bloomPass.strength = 0.35; }
+    } else {
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+      if (this.composer) { this.composer.enabled = true; }
+      if (this.bloomPass) { this.bloomPass.strength = 0.55; }
+    }
+  }
+
+  _handleStartDuel() {
     const tutorialDone = localStorage.getItem('wizard_duel_tutorial_done') === '1';
     if (!tutorialDone) {
       this._beginTutorial();
@@ -218,6 +268,8 @@ export class Game {
 
     this.gameOver = false;
     this.input.setGameplayEnabled(true);
+    this.hud.hideStart();
+    this.mainMenu.hide();
     this._advanceTutorial();
   }
 
@@ -244,10 +296,10 @@ export class Game {
     if (this.tutorialStep >= steps.length) {
       this.hud.hideTutorial();
       localStorage.setItem('wizard_duel_tutorial_done', '1');
-      this.phase = GAME_PHASE.READY;
+      this.phase = GAME_PHASE.MAIN_MENU;
       this.input.setGameplayEnabled(false);
-      this.hud.showStart((difficulty) => this.startDuel(difficulty));
-      this.hud.showRetryTutorial(() => this._beginTutorial());
+      this.enemy.group.visible = false;
+      this.mainMenu.show();
       return;
     }
 
@@ -310,6 +362,7 @@ export class Game {
     this.countdownTimer = 3.2;
 
     this.hud.hideStart();
+    this.mainMenu.hide();
     this.input.setGameplayEnabled(false);
   }
 
@@ -359,6 +412,23 @@ export class Game {
   tick() {
     if (this.paused) return;
     const dt = Math.min(this.clock.getDelta(), 0.05);
+
+    // ---- 主菜单状态：仅渲染背景 + 菜单摄像机 ----
+    if (this.phase === GAME_PHASE.MAIN_MENU) {
+      this._menuTime += dt;
+      // 玩家站在原地，面向竞技场中央
+      this.player.update(dt, this.input, this.cameraYaw, this.arena.radius);
+      this.target.update(dt);
+      this.arena.update(dt);
+      this.props.update(dt);
+      this.effects.update(dt);
+
+      this.updateMenuCamera(dt);
+
+      if (this.composer && this.composer.enabled !== false) this.composer.render();
+      else this.renderer.render(this.scene, this.camera);
+      return;
+    }
 
     // ---- 镜头旋转 ----
     const look = this.input.consumeLook();
@@ -488,6 +558,27 @@ export class Game {
     this.camera.lookAt(head.x, head.y + 0.3, head.z);
   }
 
+  updateMenuCamera(dt) {
+    // 缓慢漂移的菜单摄像机
+    const t = this._menuTime;
+    const angle = 0.35 + Math.sin(t * 0.12) * 0.15;
+    const dist = 12;
+    const height = 5.5 + Math.sin(t * 0.18) * 0.6;
+
+    const desired = new THREE.Vector3(
+      Math.sin(angle) * dist,
+      height,
+      Math.cos(angle) * dist
+    );
+
+    const k = 1 - Math.pow(0.95, dt * 60);
+    this._menuCamPos.lerp(desired, k);
+    this.camera.position.copy(this._menuCamPos);
+
+    // 看向竞技场中央偏上
+    this.camera.lookAt(0, 2, 0);
+  }
+
   addShake(power = 1) {
     this.shake.trigger(power, this.isMobile);
   }
@@ -533,10 +624,10 @@ export class Game {
     this.restart();
   }
 
-  /** 返回主菜单：重置一切，显示开始界面 */
+  /** 返回主菜单：重置一切，显示主界面 */
   returnToMainMenu() {
     this.gameOver = false;
-    this.phase = GAME_PHASE.READY;
+    this.phase = GAME_PHASE.MAIN_MENU;
     this.winStreak = 0;
     this.player.reset();
     this.enemy.reset();
@@ -548,8 +639,7 @@ export class Game {
     this.traps.cooldown = 4.5;
     this.input.setGameplayEnabled(false);
     this.hud.hideEnd();
-    this.hud.showStart(difficulty => this.startDuel(difficulty));
-    this.hud.showRetryTutorial(() => this._beginTutorial());
+    this.mainMenu.show();
   }
 
   restart() {
