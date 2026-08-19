@@ -159,6 +159,12 @@ export class HUD {
   /* ---------- 倒计时 ---------- */
 
   showCountdown(text) {
+    if (
+      this.countdown.textContent === text &&
+      this.countdown.classList.contains('show')
+    ) {
+      return;
+    }
     this.countdown.textContent = text;
     this.countdown.classList.remove('show');
     void this.countdown.offsetWidth;

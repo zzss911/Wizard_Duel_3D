@@ -98,9 +98,16 @@ export class Game {
     // 命中回调
     this.combat.onDamage = (worldPos, amount, target) => {
       this.hud.spawnDamageNumber(worldPos, amount, this.camera);
-      if (this.phase === GAME_PHASE.TUTORIAL && target?.isTarget) {
+      if (
+        this.phase === GAME_PHASE.TUTORIAL &&
+        this.tutorialStep === 2 &&
+        target?.isTarget
+      ) {
         this.tutorialHits++;
-        this._advanceTutorial();
+        if (this.tutorialHits >= 3) {
+          this.tutorialStep++;
+          this._advanceTutorial();
+        }
       }
     };
     this.combat.onImpact = (worldPos, power) => {
@@ -183,27 +190,54 @@ export class Game {
   /* ==================== 新手训练 ==================== */
 
   _beginTutorial() {
+    // 完整重置所有状态
     this.phase = GAME_PHASE.TUTORIAL;
     this.tutorialStep = 0;
     this.tutorialHits = 0;
     this.tutorialMoved = false;
     this.tutorialLooked = false;
     this.tutorialDodged = false;
+
+    // 玩家满血回出生点
+    this.player.reset();
+    // 训练靶满血回原位
+    this.target._revive();
+    // AI 隐藏
     this.enemy.group.visible = false;
+    this.enemy.moveIntent.set(0, 0, 0);
+    this.enemy.setCastGlow(0);
+    // 清空弹道
+    for (const p of this.combat.pool) p.despawn();
+    // 隐藏陷阱
+    for (const t of this.traps.traps) t.hide();
+    this.traps.cooldown = 4.5;
+
+    this.gameOver = false;
     this.input.setGameplayEnabled(true);
     this._advanceTutorial();
   }
 
-  _advanceTutorial() {
-    const steps = [
-      { text: '使用 WASD 移动', check: () => this.tutorialMoved },
-      { text: '移动鼠标进行瞄准', check: () => this.tutorialLooked },
-      { text: '左键攻击训练靶（击中 3 次）', check: () => this.tutorialHits >= 3 },
-      { text: '按 Space 进行闪避', check: () => this.tutorialDodged },
+  _getTutorialSteps() {
+    if (this.input.isTouch) {
+      return [
+        '拖动左侧区域移动',
+        '在右侧滑动控制视角',
+        '点击"攻击"按钮命中训练靶 3 次',
+        '点击"闪避"按钮',
+      ];
+    }
+    return [
+      '使用 WASD 移动',
+      '移动鼠标瞄准',
+      '左键攻击训练靶（击中 3 次）',
+      '按 Space 闪避',
     ];
+  }
+
+  _advanceTutorial() {
+    const steps = this._getTutorialSteps();
 
     if (this.tutorialStep >= steps.length) {
-      // 训练完成
       this.hud.hideTutorial();
       localStorage.setItem('wizard_duel_tutorial_done', '1');
       this.phase = GAME_PHASE.READY;
@@ -213,32 +247,40 @@ export class Game {
       return;
     }
 
-    const step = steps[this.tutorialStep];
-    this.hud.showTutorial(step.text);
+    this.hud.showTutorial(steps[this.tutorialStep]);
   }
 
   _checkTutorialProgress(lookDx, lookDy) {
     if (this.phase !== GAME_PHASE.TUTORIAL) return;
-
     const mv = this.input.getMoveVector();
-    if (!this.tutorialMoved && (Math.abs(mv.x) > 0.1 || Math.abs(mv.y) > 0.1)) {
-      this.tutorialMoved = true;
-      this._advanceTutorial();
-      return;
-    }
-
-    if (!this.tutorialLooked && (Math.abs(lookDx) > 2 || Math.abs(lookDy) > 2)) {
-      this.tutorialLooked = true;
-      this._advanceTutorial();
-      return;
-    }
-
-    if (this.input.consumeAction('dodge') && !this.tutorialDodged) {
-      this.tutorialDodged = true;
-      this.player.tryDodge(mv, this.cameraYaw);
-      this.audio.playDodge();
-      this._advanceTutorial();
-      return;
+    switch (this.tutorialStep) {
+      case 0:
+        if (Math.abs(mv.x) > 0.1 || Math.abs(mv.y) > 0.1) {
+          this.tutorialMoved = true;
+          this.tutorialStep++;
+          this._advanceTutorial();
+        }
+        break;
+      case 1:
+        if (Math.abs(lookDx) > 2 || Math.abs(lookDy) > 2) {
+          this.tutorialLooked = true;
+          this.tutorialStep++;
+          this._advanceTutorial();
+        }
+        break;
+      case 2:
+        // 命中计数在 onDamage 回调中处理
+        break;
+      case 3:
+        if (this.input.consumeAction('dodge')) {
+          if (this.player.tryDodge(mv, this.cameraYaw)) {
+            this.tutorialDodged = true;
+            this.tutorialStep++;
+            this.audio.playDodge();
+            this._advanceTutorial();
+          }
+        }
+        break;
     }
   }
 
@@ -384,7 +426,18 @@ export class Game {
     }
 
     // ---- 战斗与特效 ----
-    this.combat.update(dt, this.combatants, this.arena);
+    const activeCombatants =
+      this.phase === GAME_PHASE.TUTORIAL
+        ? [this.player, this.target]
+        : [this.player, this.target, this.enemy];
+
+    if (
+      this.phase === GAME_PHASE.TUTORIAL ||
+      this.phase === GAME_PHASE.GRACE ||
+      this.phase === GAME_PHASE.PLAYING
+    ) {
+      this.combat.update(dt, activeCombatants, this.arena);
+    }
     this.effects.update(dt);
     this.explosion.update(dt, this.camera);
     this.arena.update(dt);
@@ -441,6 +494,8 @@ export class Game {
     this.input.setGameplayEnabled(false);
     this.enemy.moveIntent.set(0, 0, 0);
     this.enemy.setCastGlow(0);
+    // 清空所有残余弹道，防止死后继续造成伤害
+    for (const p of this.combat.pool) p.despawn();
     this.hud.showEnd(win, () => this.restart());
   }
 
