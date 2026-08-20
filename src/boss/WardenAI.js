@@ -354,11 +354,9 @@ export class WardenAI {
     const cfg = SKILL_CONFIG[skill];
 
     if (skill === SKILLS.CHAIN) {
-      for (const zone of this._spawnedZones) {
-        if (zone.type === 'chain' && zone.phase === ZONE_PHASE.WARNING) {
-          zone.phase = ZONE_PHASE.TRIGGER;
-        }
-      }
+      // 锁链区域已在 _beginTelegraph 时以 WARNING 阶段生成，
+      // _updateZones 会自动完成 WARNING→TRIGGER→DAMAGE→CLEANUP，
+      // 这里不需要手动触发。
     } else if (skill === SKILLS.MAGIC_BOLT) {
       this._fireBolt(player);
       if (this.phase === 2) {
@@ -368,11 +366,9 @@ export class WardenAI {
     } else if (skill === SKILLS.QUAKE) {
       this._spawnQuakeWave(arena);
     } else if (skill === SKILLS.DEATH_CAGE) {
-      for (const zone of this._spawnedZones) {
-        if (zone.type === 'chain' && zone.phase === ZONE_PHASE.WARNING) {
-          zone.phase = ZONE_PHASE.TRIGGER;
-        }
-      }
+      // 死亡牢笼区域已在 _beginTelegraph 时以带 staggered delay 的 WARNING 阶段生成，
+      // 每个 zone 独立执行 delay→WARNING(warnTime)→TRIGGER→DAMAGE→CLEANUP，
+      // _updateZones 自动处理依次预警和依次爆炸，这里不做任何手动触发。
     }
   }
 

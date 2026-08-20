@@ -628,6 +628,9 @@ export class Game {
     // 玩家操作门控：只有 PHASE1 / PHASE2 允许移动/攻击/闪避/技能
     const canAct = this.bossController.canPlayerAct() && !this.player.dead && !this.gameOver;
 
+    // 同步 input 开关：非战斗阶段彻底禁止移动输入
+    this.input.setGameplayEnabled(canAct);
+
     if (canAct) {
       // 玩家移动
       this.player.update(dt, this.input, this.cameraYaw, this.arena.radius);
@@ -670,13 +673,13 @@ export class Game {
         }
       }
     } else {
-      // 非战斗阶段：清空输入，玩家不动
+      // 非战斗阶段：清空输入，玩家不移动
       this.input.getMoveVector();
       this.input.consumeAction('dodge');
       this.input.consumeAction('skill1');
       this.input.consumeAction('skill2');
       this.input.isAttackHeld();
-      // 玩家仍需更新（面向等），但不响应输入
+      // 玩家仍需更新（冷却/光效），但 input disabled 所以不移动
       this.player.update(dt, this.input, this.cameraYaw, this.arena.radius);
     }
 
