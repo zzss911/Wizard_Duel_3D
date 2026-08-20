@@ -15,6 +15,7 @@ import { WardenAI } from './WardenAI.js';
  */
 
 const BOSS_STATE = {
+  LOADING: 'loading',
   INTRO: 'intro',
   PHASE1: 'phase1',
   PHASE_CHANGE: 'phase_change',
@@ -75,24 +76,46 @@ export class BossBattleController {
     // 隐藏普通敌人/训练靶
     // (Game 层面负责隐藏 enemy/target)
 
-    // 开始 Intro
+    // 检查模型是否已加载
+    if (this.boss.isModelReady) {
+      this._beginIntro();
+    } else {
+      // 等待模型加载
+      this.state = BOSS_STATE.LOADING;
+      this.timer = 0;
+      this._showLoadingText();
+    }
+  }
+
+  _showLoadingText() {
+    const el = document.getElementById('boss-loading-text');
+    if (el) el.style.display = 'block';
+  }
+
+  _hideLoadingText() {
+    const el = document.getElementById('boss-loading-text');
+    if (el) el.style.display = 'none';
+  }
+
+  _beginIntro() {
+    this._hideLoadingText();
     this.state = BOSS_STATE.INTRO;
     this.timer = 0;
     this.phase2Triggered = false;
     this.bossHealthBar.hide();
     this.boss.showIntroRune();
-
-    // Boss 在 Intro 期间无敌且不可被攻击
     this.boss.setInvulnerable(5.0);
-
-    // 玩家不可移动
-    player.reset();
+    this.player.reset();
   }
 
   update(dt, player, arena) {
     this.timer += dt;
 
     switch (this.state) {
+      case BOSS_STATE.LOADING:
+        this._updateLoading(dt, player, arena);
+        break;
+
       case BOSS_STATE.INTRO:
         this._updateIntro(dt, player, arena);
         break;
@@ -123,6 +146,12 @@ export class BossBattleController {
 
     // Boss 始终更新（死亡动画也要播放）
     this.boss.update(dt, arena.radius);
+  }
+
+  _updateLoading(dt, player, arena) {
+    if (this.boss.isModelReady) {
+      this._beginIntro();
+    }
   }
 
   _updateIntro(dt, player, arena) {
@@ -304,6 +333,7 @@ export class BossBattleController {
     this._deathExploded2 = false;
     this._resultShown = false;
     this.phase2Triggered = false;
+    this._hideLoadingText();
     this.bossResultPanel.hide();
     this._restoreArena();
     if (this._bossLight) {
@@ -346,6 +376,8 @@ export class BossBattleController {
   canPlayerAct() {
     return this.state === BOSS_STATE.PHASE1 || this.state === BOSS_STATE.PHASE2;
   }
+
+  /** LOADING / INTRO / PHASE_CHANGE / BOSS_DEAD / PLAYER_DEAD / RESULT → false */
 
   destroy() {
     this._reset();

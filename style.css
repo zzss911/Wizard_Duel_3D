@@ -1022,6 +1022,21 @@ html, body {
 #boss-result-panel.show {
   opacity: 1; pointer-events: auto;
 }
+#boss-loading-text {
+  display: none;
+  position: fixed; top: 45%; left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 90;
+  font-size: 24px; font-weight: bold;
+  color: #c82020;
+  text-shadow: 0 0 20px rgba(200,32,32,0.6);
+  letter-spacing: 4px;
+  animation: bossLoadingPulse 1.5s ease-in-out infinite;
+}
+@keyframes bossLoadingPulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
 .boss-result-card {
   text-align: center;
   max-width: 480px; width: 90%;

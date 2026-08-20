@@ -6,7 +6,12 @@
   <title>Wizard Duel 3D · 魔法决斗</title>
   <link rel="stylesheet" href="style.css">
   <script type="importmap">
-    { "imports": { "three": "./vendor/three.module.min.js" } }
+    {
+      "imports": {
+        "three": "./vendor/three.module.min.js",
+        "three/addons/": "./vendor/addons/"
+      }
+    }
   </script>
 </head>
 <body>
@@ -164,6 +169,9 @@
       </div>
     </div>
   </div>
+
+  <!-- Boss 加载提示 -->
+  <div id="boss-loading-text">典狱长正在苏醒……</div>
 
   <!-- Boss 血条 -->
   <div id="boss-health-bar">
