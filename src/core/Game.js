@@ -616,7 +616,7 @@ export class Game {
   /* ==================== Boss 战主循环 ==================== */
 
   _tickBossBattle(dt) {
-    // 镜头旋转
+    // 镜头旋转（始终允许）
     const look = this.input.consumeLook();
     const sens = this.input.isTouch ? 0.005 : 0.0028;
     this.cameraYaw -= look.dx * sens;
@@ -625,49 +625,66 @@ export class Game {
     // Boss 控制器更新
     this.bossController.update(dt, this.player, this.arena);
 
-    // 玩家移动
-    this.player.update(dt, this.input, this.cameraYaw, this.arena.radius);
+    // 玩家操作门控：只有 PHASE1 / PHASE2 允许移动/攻击/闪避/技能
+    const canAct = this.bossController.canPlayerAct() && !this.player.dead && !this.gameOver;
 
-    // 玩家攻击 / 闪避 / 技能
-    const canAct = !this.player.dead && !this.gameOver;
+    if (canAct) {
+      // 玩家移动
+      this.player.update(dt, this.input, this.cameraYaw, this.arena.radius);
 
-    if (this.input.isAttackHeld() && canAct) {
-      const cp = Math.cos(this.cameraPitch), sp = Math.sin(this.cameraPitch);
-      this._aimDir.set(-Math.sin(this.cameraYaw) * cp, -sp * 0.6, -Math.cos(this.cameraYaw) * cp).normalize();
-      if (this.combat.tryFire(this.player, this._aimDir)) {
-        this.player.onCast();
-        this.audio.playCast(2);
+      // 玩家攻击
+      if (this.input.isAttackHeld()) {
+        const cp = Math.cos(this.cameraPitch), sp = Math.sin(this.cameraPitch);
+        this._aimDir.set(-Math.sin(this.cameraYaw) * cp, -sp * 0.6, -Math.cos(this.cameraYaw) * cp).normalize();
+        if (this.combat.tryFire(this.player, this._aimDir)) {
+          this.player.onCast();
+          this.audio.playCast(2);
+        }
       }
+
+      // 闪避
+      if (this.input.consumeAction('dodge')) {
+        const mv = this.input.getMoveVector();
+        if (this.player.tryDodge(mv, this.cameraYaw)) {
+          this.audio.playDodge();
+        }
+      }
+
+      // 技能1
+      if (this.input.consumeAction('skill1')) {
+        const cp2 = Math.cos(this.cameraPitch), sp2 = Math.sin(this.cameraPitch);
+        this._aimDir.set(-Math.sin(this.cameraYaw) * cp2, -sp2 * 0.6, -Math.cos(this.cameraYaw) * cp2).normalize();
+        if (this.combat.castSkill(this.player, 1, this._aimDir)) {
+          this.player.onCast();
+          this.audio.playCast(4);
+        }
+      }
+
+      // 技能2
+      if (this.input.consumeAction('skill2')) {
+        const cp3 = Math.cos(this.cameraPitch), sp3 = Math.sin(this.cameraPitch);
+        this._aimDir.set(-Math.sin(this.cameraYaw) * cp3, -sp3 * 0.6, -Math.cos(this.cameraYaw) * cp3).normalize();
+        if (this.combat.castSkill(this.player, 2, this._aimDir)) {
+          this.player.onCast();
+          this.audio.playCast(3);
+        }
+      }
+    } else {
+      // 非战斗阶段：清空输入，玩家不动
+      this.input.getMoveVector();
+      this.input.consumeAction('dodge');
+      this.input.consumeAction('skill1');
+      this.input.consumeAction('skill2');
+      this.input.isAttackHeld();
+      // 玩家仍需更新（面向等），但不响应输入
+      this.player.update(dt, this.input, this.cameraYaw, this.arena.radius);
     }
 
-    if (this.input.consumeAction('dodge') && canAct) {
-      const mv = this.input.getMoveVector();
-      if (this.player.tryDodge(mv, this.cameraYaw)) {
-        this.audio.playDodge();
-      }
+    // 战斗系统：只在玩家可操作时运行碰撞
+    if (canAct || this.bossController.state === 'phase1' || this.bossController.state === 'phase2') {
+      const bossCombatants = this.bossController.getCombatants();
+      this.combat.update(dt, bossCombatants, this.arena);
     }
-
-    if (this.input.consumeAction('skill1') && canAct) {
-      const cp2 = Math.cos(this.cameraPitch), sp2 = Math.sin(this.cameraPitch);
-      this._aimDir.set(-Math.sin(this.cameraYaw) * cp2, -sp2 * 0.6, -Math.cos(this.cameraYaw) * cp2).normalize();
-      if (this.combat.castSkill(this.player, 1, this._aimDir)) {
-        this.player.onCast();
-        this.audio.playCast(4);
-      }
-    }
-
-    if (this.input.consumeAction('skill2') && canAct) {
-      const cp3 = Math.cos(this.cameraPitch), sp3 = Math.sin(this.cameraPitch);
-      this._aimDir.set(-Math.sin(this.cameraYaw) * cp3, -sp3 * 0.6, -Math.cos(this.cameraYaw) * cp3).normalize();
-      if (this.combat.castSkill(this.player, 2, this._aimDir)) {
-        this.player.onCast();
-        this.audio.playCast(3);
-      }
-    }
-
-    // 战斗：只用 [player, boss] 作为战斗对象
-    const bossCombatants = this.bossController.getCombatants();
-    this.combat.update(dt, bossCombatants, this.arena);
 
     // 特效
     this.effects.update(dt);

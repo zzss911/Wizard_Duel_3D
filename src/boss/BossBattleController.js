@@ -82,6 +82,9 @@ export class BossBattleController {
     this.bossHealthBar.hide();
     this.boss.showIntroRune();
 
+    // Boss 在 Intro 期间无敌且不可被攻击
+    this.boss.setInvulnerable(5.0);
+
     // 玩家不可移动
     player.reset();
   }
@@ -265,6 +268,11 @@ export class BossBattleController {
 
     this.bossHealthBar.hide();
 
+    // 释放鼠标锁定，让玩家可以点击结算按钮
+    if (document.pointerLockElement) {
+      document.exitPointerLock?.();
+    }
+
     this.bossResultPanel.show({
       win,
       bossName: '典狱长',
@@ -332,6 +340,11 @@ export class BossBattleController {
 
   getCombatants() {
     return [this.player, this.boss];
+  }
+
+  /** 只有 PHASE1 / PHASE2 允许玩家操作 */
+  canPlayerAct() {
+    return this.state === BOSS_STATE.PHASE1 || this.state === BOSS_STATE.PHASE2;
   }
 
   destroy() {
