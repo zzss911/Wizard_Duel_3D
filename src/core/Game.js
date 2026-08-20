@@ -19,6 +19,10 @@ import { CameraShake } from '../systems/CameraShake.js';
 import { HUD } from '../ui/HUD.js';
 import { MainMenu } from '../ui/MainMenu.js';
 import { SettingsPanel } from '../ui/SettingsPanel.js';
+import { BossSelectPanel } from '../ui/BossSelectPanel.js';
+import { BossHealthBar } from '../ui/BossHealthBar.js';
+import { BossResultPanel } from '../ui/BossResultPanel.js';
+import { BossBattleController } from '../boss/BossBattleController.js';
 
 const GAME_PHASE = {
   MAIN_MENU: 'main_menu',
@@ -28,6 +32,8 @@ const GAME_PHASE = {
   GRACE: 'grace',
   PLAYING: 'playing',
   GAMEOVER: 'gameover',
+  BOSS_SELECT: 'boss_select',
+  BOSS_BATTLE: 'boss_battle',
 };
 
 export class Game {
@@ -61,10 +67,14 @@ export class Game {
     this.hud = new HUD();
     this.mainMenu = new MainMenu();
     this.settingsPanel = new SettingsPanel();
+    this.bossSelectPanel = new BossSelectPanel();
+    this.bossHealthBar = new BossHealthBar();
+    this.bossResultPanel = new BossResultPanel();
     this.audio = new MagicAudio();
     this.isMobile = this.input.isTouch;
     this.gameOver = false;
     this.combatants = [this.player, this.target, this.enemy];
+    this.bossController = null;
 
     // 防回归：确保 Target 类携带身份标识
     console.assert(this.target.isTarget === true, 'Target.isTarget must be true');
@@ -128,7 +138,7 @@ export class Game {
       this.hud.playerHitFlash();
       this.addShake(0.45);
       this.audio.playHit();
-      if (this.player.dead && !this.gameOver) this.endGame(false);
+      if (this.player.dead && !this.gameOver && this.phase !== GAME_PHASE.BOSS_BATTLE) this.endGame(false);
     };
     this.enemy.onDeath = () => {
       this.explosion.playMagicExplosion(this.enemy.headPosition, 1.5);
@@ -206,7 +216,16 @@ export class Game {
       onDuel: () => this._handleStartDuel(),
       onContinue: () => this.mainMenu.showContinueToast(),
       onSettings: () => this.settingsPanel.show(),
-      onBoss: () => this.mainMenu.showBossPreview(),
+      onBoss: () => this._enterBossSelect(),
+    });
+
+    // Boss 选择页回调
+    this.bossSelectPanel.setCallbacks({
+      onStart: () => this._startBossBattle(),
+      onBack: () => {
+        this.bossSelectPanel.hide();
+        this.mainMenu.show();
+      },
     });
 
     // 应用已保存的设置
@@ -416,17 +435,32 @@ export class Game {
     // ---- 主菜单状态：仅渲染背景 + 菜单摄像机 ----
     if (this.phase === GAME_PHASE.MAIN_MENU) {
       this._menuTime += dt;
-      // 玩家站在原地，面向竞技场中央
       this.player.update(dt, this.input, this.cameraYaw, this.arena.radius);
       this.target.update(dt);
       this.arena.update(dt);
       this.props.update(dt);
       this.effects.update(dt);
-
       this.updateMenuCamera(dt);
-
       if (this.composer && this.composer.enabled !== false) this.composer.render();
       else this.renderer.render(this.scene, this.camera);
+      return;
+    }
+
+    // ---- Boss 选择页：同主菜单渲染 ----
+    if (this.phase === GAME_PHASE.BOSS_SELECT) {
+      this._menuTime += dt;
+      this.arena.update(dt);
+      this.props.update(dt);
+      this.effects.update(dt);
+      this.updateMenuCamera(dt);
+      if (this.composer && this.composer.enabled !== false) this.composer.render();
+      else this.renderer.render(this.scene, this.camera);
+      return;
+    }
+
+    // ---- Boss 战 ----
+    if (this.phase === GAME_PHASE.BOSS_BATTLE) {
+      this._tickBossBattle(dt);
       return;
     }
 
@@ -579,6 +613,78 @@ export class Game {
     this.camera.lookAt(0, 2, 0);
   }
 
+  /* ==================== Boss 战主循环 ==================== */
+
+  _tickBossBattle(dt) {
+    // 镜头旋转
+    const look = this.input.consumeLook();
+    const sens = this.input.isTouch ? 0.005 : 0.0028;
+    this.cameraYaw -= look.dx * sens;
+    this.cameraPitch = THREE.MathUtils.clamp(this.cameraPitch + look.dy * sens, 0.08, 1.05);
+
+    // Boss 控制器更新
+    this.bossController.update(dt, this.player, this.arena);
+
+    // 玩家移动
+    this.player.update(dt, this.input, this.cameraYaw, this.arena.radius);
+
+    // 玩家攻击 / 闪避 / 技能
+    const canAct = !this.player.dead && !this.gameOver;
+
+    if (this.input.isAttackHeld() && canAct) {
+      const cp = Math.cos(this.cameraPitch), sp = Math.sin(this.cameraPitch);
+      this._aimDir.set(-Math.sin(this.cameraYaw) * cp, -sp * 0.6, -Math.cos(this.cameraYaw) * cp).normalize();
+      if (this.combat.tryFire(this.player, this._aimDir)) {
+        this.player.onCast();
+        this.audio.playCast(2);
+      }
+    }
+
+    if (this.input.consumeAction('dodge') && canAct) {
+      const mv = this.input.getMoveVector();
+      if (this.player.tryDodge(mv, this.cameraYaw)) {
+        this.audio.playDodge();
+      }
+    }
+
+    if (this.input.consumeAction('skill1') && canAct) {
+      const cp2 = Math.cos(this.cameraPitch), sp2 = Math.sin(this.cameraPitch);
+      this._aimDir.set(-Math.sin(this.cameraYaw) * cp2, -sp2 * 0.6, -Math.cos(this.cameraYaw) * cp2).normalize();
+      if (this.combat.castSkill(this.player, 1, this._aimDir)) {
+        this.player.onCast();
+        this.audio.playCast(4);
+      }
+    }
+
+    if (this.input.consumeAction('skill2') && canAct) {
+      const cp3 = Math.cos(this.cameraPitch), sp3 = Math.sin(this.cameraPitch);
+      this._aimDir.set(-Math.sin(this.cameraYaw) * cp3, -sp3 * 0.6, -Math.cos(this.cameraYaw) * cp3).normalize();
+      if (this.combat.castSkill(this.player, 2, this._aimDir)) {
+        this.player.onCast();
+        this.audio.playCast(3);
+      }
+    }
+
+    // 战斗：只用 [player, boss] 作为战斗对象
+    const bossCombatants = this.bossController.getCombatants();
+    this.combat.update(dt, bossCombatants, this.arena);
+
+    // 特效
+    this.effects.update(dt);
+    this.explosion.update(dt, this.camera);
+    this.arena.update(dt);
+    this.props.update(dt);
+
+    // 摄像机
+    this.updateCamera(dt);
+
+    // HUD：只显示玩家血条和技能冷却
+    this.hud.update(this.player, this.player, null);
+
+    if (this.composer) this.composer.render();
+    else this.renderer.render(this.scene, this.camera);
+  }
+
   addShake(power = 1) {
     this.shake.trigger(power, this.isMobile);
   }
@@ -624,8 +730,84 @@ export class Game {
     this.restart();
   }
 
+  /* ==================== Boss 模式 ==================== */
+
+  _enterBossSelect() {
+    this.phase = GAME_PHASE.BOSS_SELECT;
+    this.mainMenu.hide();
+    this.bossSelectPanel.show();
+  }
+
+  _startBossBattle() {
+    this.phase = GAME_PHASE.BOSS_BATTLE;
+    this.gameOver = false;
+
+    // 隐藏普通敌人和训练靶
+    this.enemy.group.visible = false;
+    this.enemy.moveIntent.set(0, 0, 0);
+    this.enemy.setCastGlow(0);
+    this.target.group.visible = false;
+
+    // 清空残余弹道与陷阱
+    for (const p of this.combat.pool) p.despawn();
+    for (const t of this.traps.traps) t.hide();
+    this.traps.cooldown = 999; // Boss 战不触发普通陷阱
+
+    // 玩家重置
+    this.player.reset();
+
+    // 创建 Boss 控制器
+    if (this.bossController) {
+      this.bossController.destroy();
+    }
+    this.bossController = new BossBattleController(
+      this.scene, this.combat, this.effects, this.explosion,
+      this.audio, this.hud, this.bossHealthBar, this.bossResultPanel
+    );
+
+    this.bossController.onComplete = (action) => this._onBossComplete(action);
+    this.bossController.start(this.player, this.arena);
+
+    this.input.setGameplayEnabled(true);
+  }
+
+  _onBossComplete(action) {
+    if (action === 'retry') {
+      this._startBossBattle();
+    } else if (action === 'select') {
+      this._exitBossBattle();
+      this._enterBossSelect();
+    } else if (action === 'menu') {
+      this._exitBossBattle();
+      this.returnToMainMenu();
+    }
+  }
+
+  _exitBossBattle() {
+    if (this.bossController) {
+      this.bossController.destroy();
+      this.bossController = null;
+    }
+    // 恢复训练靶和敌人可见性
+    this.target.group.visible = true;
+    this.target._revive();
+    this.traps.cooldown = 4.5;
+  }
+
+  /* ==================== 返回主菜单 ==================== */
+
   /** 返回主菜单：重置一切，显示主界面 */
   returnToMainMenu() {
+    // 清理 Boss 战
+    if (this.bossController) {
+      this.bossController.destroy();
+      this.bossController = null;
+    }
+    this.bossHealthBar.hide();
+    this.bossResultPanel.hide();
+    this.bossSelectPanel.hide();
+    this.target.group.visible = true;
+
     this.gameOver = false;
     this.phase = GAME_PHASE.MAIN_MENU;
     this.winStreak = 0;

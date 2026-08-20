@@ -144,6 +144,54 @@
   <!-- 继续游戏提示 -->
   <div id="continue-toast">暂无可继续的游戏</div>
 
+  <!-- Boss 选择页 -->
+  <div id="boss-select-panel">
+    <div class="boss-select-card">
+      <h1>Boss 挑战</h1>
+      <div class="boss-list">
+        <div class="boss-card" id="boss-warden-card">
+          <div class="boss-card-portrait">⚔</div>
+          <div class="boss-card-info">
+            <div class="boss-card-name">典狱长</div>
+            <div class="boss-card-danger">危险等级：★★★☆☆</div>
+            <div class="boss-card-desc">被锁链封印在竞技场深处的黑暗守卫。</div>
+          </div>
+        </div>
+      </div>
+      <div class="boss-select-actions">
+        <button id="btn-boss-start">开始挑战</button>
+        <button id="btn-boss-select-back">返回主界面</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Boss 血条 -->
+  <div id="boss-health-bar">
+    <div id="boss-bar-name"></div>
+    <div id="boss-bar-sub"></div>
+    <div class="boss-bar-track">
+      <div id="boss-bar-fill"></div>
+    </div>
+    <div id="boss-bar-phase"></div>
+  </div>
+
+  <!-- Boss 结算页 -->
+  <div id="boss-result-panel">
+    <div class="boss-result-card">
+      <div id="boss-result-title"></div>
+      <div id="boss-result-boss-name"></div>
+      <div id="boss-result-desc"></div>
+      <div id="boss-result-time"></div>
+      <div id="boss-result-hp"></div>
+      <div id="boss-result-rank"></div>
+      <div class="boss-result-actions">
+        <button id="btn-boss-retry">再次挑战</button>
+        <button id="btn-boss-select">返回 Boss 选择</button>
+        <button id="btn-boss-menu">返回主界面</button>
+      </div>
+    </div>
+  </div>
+
   <script type="module" src="src/main.js"></script>
 </body>
 </html>

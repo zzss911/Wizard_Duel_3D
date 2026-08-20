@@ -872,3 +872,244 @@ html, body {
     letter-spacing: 8px;
   }
 }
+
+/* ==================== Boss 选择页 ==================== */
+#boss-select-panel {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(ellipse at center, rgba(20,6,8,0.92), rgba(4,2,6,0.96));
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.4s ease;
+}
+#boss-select-panel.show {
+  opacity: 1; pointer-events: auto;
+}
+.boss-select-card {
+  text-align: center;
+  max-width: 520px; width: 90%;
+}
+.boss-select-card h1 {
+  color: #c82020;
+  font-size: 32px; letter-spacing: 6px;
+  margin-bottom: 32px;
+  text-shadow: 0 0 20px rgba(200,32,32,0.6);
+}
+.boss-list {
+  display: flex; flex-direction: column; gap: 16px;
+  margin-bottom: 32px;
+}
+.boss-card {
+  display: flex; align-items: center; gap: 20px;
+  padding: 20px;
+  background: rgba(30,12,14,0.85);
+  border: 2px solid rgba(200,32,32,0.4);
+  border-radius: 12px;
+  transition: border-color 0.3s, transform 0.2s;
+  cursor: default;
+}
+.boss-card:hover {
+  border-color: rgba(255,60,40,0.7);
+  transform: translateY(-2px);
+}
+.boss-card-portrait {
+  font-size: 48px;
+  width: 80px; height: 80px;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(circle, rgba(200,32,32,0.3), transparent);
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.boss-card-info {
+  text-align: left;
+}
+.boss-card-name {
+  font-size: 24px; color: #e8c0b0; font-weight: bold;
+  margin-bottom: 4px;
+}
+.boss-card-danger {
+  font-size: 14px; color: #ff6040;
+  margin-bottom: 8px;
+}
+.boss-card-desc {
+  font-size: 13px; color: #9a8070; line-height: 1.5;
+}
+.boss-select-actions {
+  display: flex; flex-direction: column; gap: 12px;
+  align-items: center;
+}
+.boss-select-actions button {
+  min-width: 240px; padding: 14px 24px;
+  font-size: 18px;
+  border: 2px solid;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+#btn-boss-start {
+  background: linear-gradient(135deg, #8a1a1a, #c82020);
+  border-color: #ff4030; color: #fff;
+  text-shadow: 0 0 8px rgba(255,64,48,0.5);
+}
+#btn-boss-start:hover {
+  background: linear-gradient(135deg, #a82020, #e03030);
+  box-shadow: 0 0 16px rgba(255,64,48,0.4);
+}
+#btn-boss-select-back {
+  background: transparent;
+  border-color: rgba(180,160,150,0.4);
+  color: #b0a090;
+}
+#btn-boss-select-back:hover {
+  border-color: rgba(180,160,150,0.7);
+}
+
+/* ==================== Boss 血条 ==================== */
+#boss-health-bar {
+  position: fixed; top: 20px; left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  text-align: center;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.5s ease;
+  min-width: 400px;
+}
+#boss-health-bar.show {
+  opacity: 1;
+}
+#boss-bar-name {
+  font-size: 22px; color: #ff5040; font-weight: bold;
+  letter-spacing: 4px;
+  text-shadow: 0 0 12px rgba(255,80,64,0.6);
+  margin-bottom: 2px;
+}
+#boss-bar-sub {
+  font-size: 12px; color: #a06050; letter-spacing: 3px;
+  margin-bottom: 6px;
+}
+.boss-bar-track {
+  width: 100%; height: 18px;
+  background: rgba(20,8,8,0.85);
+  border: 2px solid rgba(200,32,32,0.5);
+  border-radius: 4px;
+  overflow: hidden;
+}
+#boss-bar-fill {
+  height: 100%; width: 100%;
+  background: linear-gradient(90deg, #6a1010, #c82020, #ff4030);
+  transition: width 0.3s ease;
+  border-radius: 2px;
+}
+#boss-bar-fill.critical {
+  animation: boss-hp-critical 0.5s ease-in-out infinite alternate;
+}
+@keyframes boss-hp-critical {
+  from { background: linear-gradient(90deg, #6a1010, #c82020, #ff4030); }
+  to { background: linear-gradient(90deg, #c82020, #ff4030, #ff6040); }
+}
+#boss-bar-phase {
+  font-size: 13px; color: #c8a090; letter-spacing: 3px;
+  margin-top: 4px;
+}
+
+/* ==================== Boss 结算页 ==================== */
+#boss-result-panel {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(ellipse at center, rgba(20,6,8,0.92), rgba(4,2,6,0.96));
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.5s ease;
+}
+#boss-result-panel.show {
+  opacity: 1; pointer-events: auto;
+}
+.boss-result-card {
+  text-align: center;
+  max-width: 480px; width: 90%;
+  padding: 40px;
+  background: rgba(20,10,12,0.9);
+  border: 2px solid rgba(200,32,32,0.3);
+  border-radius: 16px;
+}
+#boss-result-title {
+  font-size: 36px; font-weight: bold;
+  letter-spacing: 6px;
+  margin-bottom: 12px;
+}
+#boss-result-title.win {
+  color: #ffd76a;
+  text-shadow: 0 0 20px rgba(255,215,106,0.6);
+}
+#boss-result-title.lose {
+  color: #806060;
+}
+#boss-result-boss-name {
+  font-size: 18px; color: #c8a090;
+  margin-bottom: 20px;
+}
+#boss-result-desc {
+  font-size: 14px; color: #806060;
+  margin-bottom: 20px;
+  font-style: italic;
+}
+#boss-result-time,
+#boss-result-hp {
+  font-size: 16px; color: #b0a090;
+  margin-bottom: 8px;
+}
+#boss-result-rank {
+  font-size: 48px; font-weight: bold;
+  margin: 16px 0 28px;
+}
+.rank-s { color: #ffd76a; text-shadow: 0 0 24px rgba(255,215,106,0.7); }
+.rank-a { color: #ff8040; text-shadow: 0 0 16px rgba(255,128,64,0.5); }
+.rank-b { color: #80b0ff; text-shadow: 0 0 12px rgba(128,176,255,0.4); }
+.rank-c { color: #888; }
+.boss-result-actions {
+  display: flex; flex-direction: column; gap: 12px;
+  align-items: center;
+}
+.boss-result-actions button {
+  min-width: 220px; padding: 14px 24px;
+  font-size: 17px;
+  border: 2px solid;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+#btn-boss-retry {
+  background: linear-gradient(135deg, #8a1a1a, #c82020);
+  border-color: #ff4030; color: #fff;
+}
+#btn-boss-retry:hover {
+  box-shadow: 0 0 12px rgba(255,64,48,0.4);
+}
+#btn-boss-select {
+  background: transparent;
+  border-color: rgba(200,160,140,0.4);
+  color: #c8a090;
+}
+#btn-boss-select:hover {
+  border-color: rgba(200,160,140,0.7);
+}
+#btn-boss-menu {
+  background: transparent;
+  border-color: rgba(140,130,120,0.3);
+  color: #9a8a7a;
+}
+
+/* ==================== Boss UI 手机适配 ==================== */
+@media (max-width: 768px) {
+  #boss-health-bar { min-width: 300px; }
+  #boss-bar-name { font-size: 18px; letter-spacing: 2px; }
+  .boss-bar-track { height: 14px; }
+  .boss-select-card h1 { font-size: 26px; }
+  .boss-card-portrait { font-size: 36px; width: 60px; height: 60px; }
+  .boss-card-name { font-size: 20px; }
+  #boss-result-title { font-size: 28px; }
+  .boss-result-actions button {
+    min-width: 200px; min-height: 56px; font-size: 16px;
+  }
+  .boss-select-actions button {
+    min-width: 200px; min-height: 56px; font-size: 16px;
+  }
+}
