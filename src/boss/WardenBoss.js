@@ -10,6 +10,19 @@ let _loadPromise = null;
 // Animation name constants
 const ANIM_NAMES = ['Idle', 'Cast', 'Slam', 'Hit', 'Death', 'PhaseChange'];
 
+// One-shot (non-looping) animations — play once then return to Idle
+const ONE_SHOT_ANIMS = ['Cast', 'Slam', 'Hit', 'PhaseChange'];
+
+// Animation priority — higher priority cannot be interrupted by lower
+const ANIM_PRIORITY = {
+  Death: 100,
+  PhaseChange: 50,
+  Slam: 30,
+  Cast: 30,
+  Hit: 20,
+  Idle: 10,
+};
+
 // State → animation mapping
 const STATE_ANIM_MAP = {
   IDLE: 'Idle',
@@ -20,6 +33,14 @@ const STATE_ANIM_MAP = {
   QUAKE: 'Slam',
   PHASE_CHANGE: 'PhaseChange',
   DEAD: 'Death',
+};
+
+// One-shot anims that should return to Idle when finished
+const ANIM_RETURN_STATE = {
+  Hit: true,
+  Cast: true,
+  Slam: true,
+  PhaseChange: true,
 };
 
 function loadWardenGLB() {
@@ -86,11 +107,15 @@ export class WardenBoss {
     // Animation system
     this._mixer = null; // THREE.AnimationMixer
     this._animations = {}; // name → THREE.AnimationClip
+    this._actions = {}; // name → AnimationAction
     this._currentAction = null; // currently playing AnimationAction
     this._currentAnimName = null;
     this._hasAnims = false; // true if GLB has skeletal animations
-    this._animFadeTime = 0.3; // fade duration in seconds
+    this._animFadeTime = 0.3; // default fade duration in seconds
     this._bossState = 'IDLE'; // current boss logic state (for anim mapping)
+    this._oneShotActive = false; // true while a one-shot anim is playing
+    this._oneShotName = null; // name of the currently playing one-shot
+    this._oneShotPriority = 0; // priority of current one-shot
 
     // Model loading state
     this._modelLoaded = false;
@@ -233,33 +258,66 @@ export class WardenBoss {
   _initAnimationSystem(animations) {
     if (!animations || animations.length === 0) return;
     this._mixer = new THREE.AnimationMixer(this._gltfScene);
+
+    // Listen for 'finished' events from one-shot animations
+    this._mixer.addEventListener('finished', (e) => {
+      const finishedAction = e.action;
+      const finishedName = this._actionToName(finishedAction);
+      if (!finishedName) return;
+
+      // Clear one-shot state
+      this._oneShotActive = false;
+      this._oneShotName = null;
+      this._oneShotPriority = 0;
+
+      // Death: do NOT return to Idle — clamp in place
+      if (finishedName === 'Death') {
+        return;
+      }
+
+      // For all other one-shots: return to the animation matching current boss state
+      const stateAnim = STATE_ANIM_MAP[this._bossState] || 'Idle';
+      this._playAnimInternal(stateAnim, this._animFadeTime, false);
+    });
+
     // Map clips by name
     for (const clip of animations) {
       const name = clip.name;
       if (ANIM_NAMES.includes(name)) {
+        this._animations[name] = clip;
         const action = this._mixer.clipAction(clip);
         // Set loop properties
-        if (name === 'Idle' || name === 'PhaseChange') {
+        if (name === 'Idle') {
           action.setLoop(THREE.LoopRepeat, Infinity);
         } else {
           action.setLoop(THREE.LoopOnce, 1);
           action.clampWhenFinished = true;
         }
-        this._animations[name] = action;
+        this._actions[name] = action;
       }
     }
-    console.log('[WardenBoss] Animations loaded:', Object.keys(this._animations).join(', '));
+
+    const loaded = Object.keys(this._actions);
+    console.log('[WardenBoss] Animations loaded:', loaded.join(', '));
+
+    // Start playing Idle immediately
+    this._playAnimInternal('Idle', 0.01, false);
+  }
+
+  _actionToName(action) {
+    for (const [name, a] of Object.entries(this._actions)) {
+      if (a === action) return name;
+    }
+    return null;
   }
 
   /**
-   * Play an animation by name with fade in/out.
-   * @param {string} animName - one of ANIM_NAMES
-   * @param {number} [fadeTime] - override fade duration
-   * @param {boolean} [force] - force restart even if same anim
+   * Internal: play an animation by name with fade.
+   * Does NOT check one-shot priority — that's handled by callers.
    */
-  playAnim(animName, fadeTime, force) {
+  _playAnimInternal(animName, fadeTime, force) {
     if (!this._hasAnims || !this._mixer) return;
-    const action = this._animations[animName];
+    const action = this._actions[animName];
     if (!action) return;
 
     fadeTime = fadeTime !== undefined ? fadeTime : this._animFadeTime;
@@ -267,12 +325,12 @@ export class WardenBoss {
     // Don't restart same animation unless forced
     if (this._currentAnimName === animName && !force) return;
 
-    // Fade out current
+    // Fade out current action
     if (this._currentAction && this._currentAction !== action) {
       this._currentAction.fadeOut(fadeTime);
     }
 
-    // Fade in new
+    // Fade in new action
     action.reset();
     action.setEffectiveWeight(1);
     action.setEffectiveTimeScale(1);
@@ -284,21 +342,100 @@ export class WardenBoss {
   }
 
   /**
+   * Play a looping animation (Idle). Respects one-shot priority.
+   */
+  playAnim(animName, fadeTime, force) {
+    if (!this._hasAnims) return;
+
+    // If a one-shot is active, only higher-priority animations can interrupt
+    if (this._oneShotActive) {
+      const myPriority = ANIM_PRIORITY[animName] || 0;
+      if (myPriority < this._oneShotPriority) return;
+    }
+
+    // Death always wins
+    if (this._currentAnimName === 'Death' && animName !== 'Death') return;
+
+    this._playAnimInternal(animName, fadeTime, force);
+  }
+
+  /**
+   * Play a one-shot animation. Cannot be interrupted by lower-priority anims.
+   * Automatically returns to state-mapped animation when finished.
+   */
+  playOneShot(animName, fadeTime) {
+    if (!this._hasAnims || !this._mixer) return;
+    const action = this._actions[animName];
+    if (!action) return;
+
+    fadeTime = fadeTime !== undefined ? fadeTime : 0.15;
+
+    // Death cannot be interrupted by anything
+    if (this._currentAnimName === 'Death' && animName !== 'Death') return;
+
+    // Check priority: can this one-shot interrupt the current one?
+    const myPriority = ANIM_PRIORITY[animName] || 0;
+    if (this._oneShotActive && myPriority < this._oneShotPriority) return;
+
+    // Fade out current
+    if (this._currentAction && this._currentAction !== action) {
+      this._currentAction.fadeOut(fadeTime);
+    }
+
+    // Reset and play
+    action.reset();
+    action.setEffectiveWeight(1);
+    action.setEffectiveTimeScale(1);
+    action.fadeIn(fadeTime);
+    action.play();
+
+    this._currentAction = action;
+    this._currentAnimName = animName;
+    this._oneShotActive = true;
+    this._oneShotName = animName;
+    this._oneShotPriority = myPriority;
+  }
+
+  /**
    * Set boss state and auto-map to animation.
    * Called by WardenAI / BossBattleController.
+   * One-shot anims (Cast, Slam, PhaseChange, Death) use playOneShot.
+   * Looping anims (Idle) use playAnim.
    * @param {string} state - boss logic state (IDLE, TELEGRAPH, MAGIC_BOLT, etc.)
    */
   setBossState(state) {
     this._bossState = state;
     const animName = STATE_ANIM_MAP[state];
-    if (animName) {
-      if (state === 'DEAD') {
-        this.playAnim('Death', 0.2, true);
-      } else if (state === 'PHASE_CHANGE') {
-        this.playAnim('PhaseChange', 0.3, true);
-      } else {
-        this.playAnim(animName, this._animFadeTime);
-      }
+    if (!animName) return;
+
+    // Death: always play as one-shot, highest priority
+    if (state === 'DEAD') {
+      this.playOneShot('Death', 0.2);
+      return;
+    }
+
+    // PhaseChange: one-shot
+    if (state === 'PHASE_CHANGE') {
+      this.playOneShot('PhaseChange', 0.3);
+      return;
+    }
+
+    // QUAKE maps to Slam (one-shot)
+    if (state === 'QUAKE') {
+      this.playOneShot('Slam', 0.15);
+      return;
+    }
+
+    // TELEGRAPH/MAGIC_BOLT/CHAIN → Cast (one-shot)
+    if (state === 'TELEGRAPH' || state === 'MAGIC_BOLT' || state === 'CHAIN') {
+      this.playOneShot('Cast', 0.15);
+      return;
+    }
+
+    // IDLE/RECOVER → Idle (looping, can be deferred if one-shot is active)
+    if (state === 'IDLE' || state === 'RECOVER') {
+      this.playAnim('Idle', this._animFadeTime);
+      return;
     }
   }
 
@@ -489,7 +626,7 @@ export class WardenBoss {
       this._deathT += dt;
       const dp = Math.min(1, this._deathT / 2.0);
       // If no skeletal Death anim, use procedural death
-      if (!this._hasAnims || !this._animations['Death']) {
+      if (!this._hasAnims || !this._actions['Death']) {
         this.group.rotation.x = -dp * 0.6;
         this.group.position.y = -dp * 1.2;
       }
@@ -597,9 +734,9 @@ export class WardenBoss {
     if (this.dead || this._invulnT > 0) return;
     this.hp = Math.max(0, this.hp - amount);
     this._flash = 0.15;
-    // Trigger Hit animation (only if not currently in Death/PhaseChange)
-    if (this._hasAnims && this._currentAnimName !== 'Death' && this._currentAnimName !== 'PhaseChange') {
-      this.playAnim('Hit', 0.1, true);
+    // Trigger Hit one-shot (cannot interrupt Death/PhaseChange due to priority)
+    if (this._hasAnims && this._currentAnimName !== 'Death') {
+      this.playOneShot('Hit', 0.1);
     }
     if (this.hp <= 0) {
       this.dead = true;
@@ -617,9 +754,9 @@ export class WardenBoss {
   }
 
   onCast() {
-    // Trigger Cast animation when boss attacks
+    // Trigger Cast one-shot when boss attacks
     if (this._hasAnims && this._currentAnimName !== 'Death') {
-      this.playAnim('Cast', 0.1, true);
+      this.playOneShot('Cast', 0.1);
     }
   }
 
@@ -678,13 +815,16 @@ export class WardenBoss {
 
     // Reset animations — stop all, return to Idle
     if (this._mixer) {
-      for (const name of Object.keys(this._animations)) {
-        this._animations[name].stop();
+      for (const name of Object.keys(this._actions)) {
+        this._actions[name].stop();
       }
       this._currentAction = null;
       this._currentAnimName = null;
+      this._oneShotActive = false;
+      this._oneShotName = null;
+      this._oneShotPriority = 0;
       this._bossState = 'IDLE';
-      this.playAnim('Idle', 0.1, true);
+      this._playAnimInternal('Idle', 0.1, true);
     }
   }
 }

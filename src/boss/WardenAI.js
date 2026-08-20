@@ -195,7 +195,6 @@ export class WardenAI {
 
         if (this.timer <= 0) {
           this._executeAttack(this._currentSkill, player, arena);
-          b.onCast();
           b.setCastGlow(0);
           this.state = STATE.RECOVER;
           this.timer = SKILL_CONFIG[this._currentSkill].recover;
@@ -386,9 +385,10 @@ export class WardenAI {
   _executeAttack(skill, player, arena) {
     const cfg = SKILL_CONFIG[skill];
 
-    // Trigger Slam animation for Quake (other skills already in Cast from TELEGRAPH)
+    // QUAKE triggers Slam one-shot at attack execution; other skills
+    // already have Cast playing from TELEGRAPH state — don't override.
     if (skill === SKILLS.QUAKE) {
-      this.boss.playAnim('Slam', 0.1, true);
+      this.boss.playOneShot('Slam', 0.1);
     }
 
     if (skill === SKILLS.CHAIN) {
