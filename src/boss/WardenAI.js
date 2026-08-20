@@ -22,6 +22,17 @@ const STATE = {
   DEAD: 'dead',
 };
 
+// Map WardenAI state → animation state name (for WardenBoss.setBossState)
+const ANIM_STATE_MAP = {
+  [STATE.IDLE]: 'IDLE',
+  [STATE.CHOOSE]: 'IDLE',
+  [STATE.TELEGRAPH]: 'TELEGRAPH',
+  [STATE.ATTACK]: 'TELEGRAPH',
+  [STATE.RECOVER]: 'RECOVER',
+  [STATE.PHASE_CHANGE]: 'PHASE_CHANGE',
+  [STATE.DEAD]: 'DEAD',
+};
+
 const SKILLS = {
   CHAIN: 'chain',
   MAGIC_BOLT: 'magic_bolt',
@@ -106,6 +117,7 @@ export class WardenAI {
     this._boltCount = 0;
     this._boltTimer = 0;
     this.boss.setCastGlow(0);
+    this._syncAnimState();
   }
 
   setPhase2() {
@@ -118,7 +130,10 @@ export class WardenAI {
     b.moveIntent.set(0, 0, 0);
 
     if (b.dead) {
-      this.state = STATE.DEAD;
+      if (this.state !== STATE.DEAD) {
+        this.state = STATE.DEAD;
+        this._syncAnimState();
+      }
       b.setCastGlow(0);
       return;
     }
@@ -142,6 +157,8 @@ export class WardenAI {
       }
     }
 
+    const prevState = this.state;
+
     switch (this.state) {
       case STATE.IDLE:
         b.faceTowards(player.position, dt);
@@ -149,7 +166,10 @@ export class WardenAI {
           this._tmp.subVectors(player.position, b.position).setY(0).normalize();
           b.moveIntent.copy(this._tmp).multiplyScalar(0.5);
         }
-        if (this.timer <= 0) this.state = STATE.CHOOSE;
+        if (this.timer <= 0) {
+          this.state = STATE.CHOOSE;
+          this._syncAnimState();
+        }
         break;
 
       case STATE.CHOOSE: {
@@ -161,6 +181,7 @@ export class WardenAI {
         this.attackHistory.push(skill);
         if (this.attackHistory.length > 4) this.attackHistory.shift();
         this._beginTelegraph(skill, player);
+        this._syncAnimState();
         break;
       }
 
@@ -174,9 +195,11 @@ export class WardenAI {
 
         if (this.timer <= 0) {
           this._executeAttack(this._currentSkill, player, arena);
+          b.onCast();
           b.setCastGlow(0);
           this.state = STATE.RECOVER;
           this.timer = SKILL_CONFIG[this._currentSkill].recover;
+          this._syncAnimState();
         }
         break;
       }
@@ -190,6 +213,7 @@ export class WardenAI {
         if (this.timer <= 0) {
           this.state = STATE.IDLE;
           this.timer = 0.8 + Math.random() * 0.8;
+          this._syncAnimState();
         }
         break;
 
@@ -198,8 +222,16 @@ export class WardenAI {
         if (this.timer <= 0) {
           this.state = STATE.IDLE;
           this.timer = 1.0;
+          this._syncAnimState();
         }
         break;
+    }
+  }
+
+  _syncAnimState() {
+    const animState = ANIM_STATE_MAP[this.state];
+    if (animState) {
+      this.boss.setBossState(animState);
     }
   }
 
@@ -211,6 +243,7 @@ export class WardenAI {
     this._clearZones();
     this._clearQuakeWave();
     this._boltCount = 0;
+    this._syncAnimState();
   }
 
   _chooseSkill(dist) {
@@ -352,6 +385,11 @@ export class WardenAI {
 
   _executeAttack(skill, player, arena) {
     const cfg = SKILL_CONFIG[skill];
+
+    // Trigger Slam animation for Quake (other skills already in Cast from TELEGRAPH)
+    if (skill === SKILLS.QUAKE) {
+      this.boss.playAnim('Slam', 0.1, true);
+    }
 
     if (skill === SKILLS.CHAIN) {
       // 锁链区域已在 _beginTelegraph 时以 WARNING 阶段生成，

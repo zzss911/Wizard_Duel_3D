@@ -7,16 +7,42 @@ const IS_MOBILE = window.matchMedia('(pointer: coarse)').matches;
 let _loader = null;
 let _loadPromise = null;
 
+// Animation name constants
+const ANIM_NAMES = ['Idle', 'Cast', 'Slam', 'Hit', 'Death', 'PhaseChange'];
+
+// State → animation mapping
+const STATE_ANIM_MAP = {
+  IDLE: 'Idle',
+  RECOVER: 'Idle',
+  TELEGRAPH: 'Cast',
+  MAGIC_BOLT: 'Cast',
+  CHAIN: 'Cast',
+  QUAKE: 'Slam',
+  PHASE_CHANGE: 'PhaseChange',
+  DEAD: 'Death',
+};
+
 function loadWardenGLB() {
   if (_loadPromise) return _loadPromise;
   if (!_loader) _loader = new GLTFLoader();
   _loadPromise = new Promise((resolve, reject) => {
-    _loader.load(
-      './assets/models/warden.glb',
-      (gltf) => resolve(gltf.scene),
-      undefined,
-      (err) => reject(err)
-    );
+    // Try rigged version first, fall back to original
+    const tryLoad = (url, isFallback) => {
+      _loader.load(
+        url,
+        (gltf) => resolve({ scene: gltf.scene, animations: gltf.animations || [], hasAnims: (gltf.animations || []).length > 0 }),
+        undefined,
+        (err) => {
+          if (!isFallback) {
+            console.warn('[WardenBoss] warden_rigged.glb not found, trying warden.glb...');
+            tryLoad('./assets/models/warden.glb', true);
+          } else {
+            reject(err);
+          }
+        }
+      );
+    };
+    tryLoad('./assets/models/warden_rigged.glb', false);
   });
   return _loadPromise;
 }
@@ -56,6 +82,15 @@ export class WardenBoss {
     this._invulnT = 0;
     this.phase2 = false;
     this.onDeath = null;
+
+    // Animation system
+    this._mixer = null; // THREE.AnimationMixer
+    this._animations = {}; // name → THREE.AnimationClip
+    this._currentAction = null; // currently playing AnimationAction
+    this._currentAnimName = null;
+    this._hasAnims = false; // true if GLB has skeletal animations
+    this._animFadeTime = 0.3; // fade duration in seconds
+    this._bossState = 'IDLE'; // current boss logic state (for anim mapping)
 
     // Model loading state
     this._modelLoaded = false;
@@ -105,8 +140,12 @@ export class WardenBoss {
     this._modelLoading = true;
 
     loadWardenGLB()
-      .then((gltfScene) => {
-        this._setupGLBModel(gltfScene);
+      .then((result) => {
+        this._setupGLBModel(result.scene, result.animations);
+        this._hasAnims = result.hasAnims;
+        if (this._hasAnims) {
+          this._initAnimationSystem(result.animations);
+        }
         this._modelLoaded = true;
         this._modelLoading = false;
       })
@@ -119,7 +158,7 @@ export class WardenBoss {
       });
   }
 
-  _setupGLBModel(gltfScene) {
+  _setupGLBModel(gltfScene, animations) {
     // Scale model: original ~1.15 units high, target ~3.0-3.2
     gltfScene.scale.setScalar(2.7);
 
@@ -135,7 +174,6 @@ export class WardenBoss {
         child.receiveShadow = true;
         if (child.material && !this._flashMaterials.includes(child.material)) {
           this._flashMaterials.push(child.material);
-          // Store original emissive for flash effect
           if (child.material.emissive) {
             child.material._origEmissive = child.material.emissive.getHex();
             child.material._origEmissiveIntensity = child.material.emissiveIntensity || 0;
@@ -188,6 +226,80 @@ export class WardenBoss {
     // Point light for chest glow
     this._chestLight = new THREE.PointLight(0xff2010, 3, 5, 2);
     this.chestAnchor.add(this._chestLight);
+  }
+
+  // ---- Animation system ----
+
+  _initAnimationSystem(animations) {
+    if (!animations || animations.length === 0) return;
+    this._mixer = new THREE.AnimationMixer(this._gltfScene);
+    // Map clips by name
+    for (const clip of animations) {
+      const name = clip.name;
+      if (ANIM_NAMES.includes(name)) {
+        const action = this._mixer.clipAction(clip);
+        // Set loop properties
+        if (name === 'Idle' || name === 'PhaseChange') {
+          action.setLoop(THREE.LoopRepeat, Infinity);
+        } else {
+          action.setLoop(THREE.LoopOnce, 1);
+          action.clampWhenFinished = true;
+        }
+        this._animations[name] = action;
+      }
+    }
+    console.log('[WardenBoss] Animations loaded:', Object.keys(this._animations).join(', '));
+  }
+
+  /**
+   * Play an animation by name with fade in/out.
+   * @param {string} animName - one of ANIM_NAMES
+   * @param {number} [fadeTime] - override fade duration
+   * @param {boolean} [force] - force restart even if same anim
+   */
+  playAnim(animName, fadeTime, force) {
+    if (!this._hasAnims || !this._mixer) return;
+    const action = this._animations[animName];
+    if (!action) return;
+
+    fadeTime = fadeTime !== undefined ? fadeTime : this._animFadeTime;
+
+    // Don't restart same animation unless forced
+    if (this._currentAnimName === animName && !force) return;
+
+    // Fade out current
+    if (this._currentAction && this._currentAction !== action) {
+      this._currentAction.fadeOut(fadeTime);
+    }
+
+    // Fade in new
+    action.reset();
+    action.setEffectiveWeight(1);
+    action.setEffectiveTimeScale(1);
+    action.fadeIn(fadeTime);
+    action.play();
+
+    this._currentAction = action;
+    this._currentAnimName = animName;
+  }
+
+  /**
+   * Set boss state and auto-map to animation.
+   * Called by WardenAI / BossBattleController.
+   * @param {string} state - boss logic state (IDLE, TELEGRAPH, MAGIC_BOLT, etc.)
+   */
+  setBossState(state) {
+    this._bossState = state;
+    const animName = STATE_ANIM_MAP[state];
+    if (animName) {
+      if (state === 'DEAD') {
+        this.playAnim('Death', 0.2, true);
+      } else if (state === 'PHASE_CHANGE') {
+        this.playAnim('PhaseChange', 0.3, true);
+      } else {
+        this.playAnim(animName, this._animFadeTime);
+      }
+    }
   }
 
   // ---- Procedural fallback (original model) ----
@@ -350,6 +462,11 @@ export class WardenBoss {
   }
 
   update(dt, arenaRadius) {
+    // Update animation mixer
+    if (this._mixer) {
+      this._mixer.update(dt);
+    }
+
     // Chest core pulsing
     if (this._chestCoreMat) {
       const pulse = 0.6 + Math.sin(performance.now() * 0.004) * 0.2 + this._castGlow * 0.4;
@@ -371,9 +488,11 @@ export class WardenBoss {
     if (this.dead) {
       this._deathT += dt;
       const dp = Math.min(1, this._deathT / 2.0);
-      // Tilt forward and sink
-      this.group.rotation.x = -dp * 0.6;
-      this.group.position.y = -dp * 1.2;
+      // If no skeletal Death anim, use procedural death
+      if (!this._hasAnims || !this._animations['Death']) {
+        this.group.rotation.x = -dp * 0.6;
+        this.group.position.y = -dp * 1.2;
+      }
       // Flickering runes
       this.runeMat.emissiveIntensity = 0.5 + Math.sin(this._deathT * 20) * 2;
       this.eyeMat.emissiveIntensity = Math.max(0, 3 - this._deathT * 1.5);
@@ -440,8 +559,8 @@ export class WardenBoss {
       this._updateFog(dt);
     }
 
-    // Idle breathing (very subtle vertical bob)
-    if (this.visualRoot) {
+    // Procedural idle breathing — only if no skeletal animations
+    if (this.visualRoot && !this._hasAnims) {
       const breath = Math.sin(performance.now() * 0.0015) * 0.02;
       this.visualRoot.position.y = breath;
     }
@@ -478,9 +597,14 @@ export class WardenBoss {
     if (this.dead || this._invulnT > 0) return;
     this.hp = Math.max(0, this.hp - amount);
     this._flash = 0.15;
+    // Trigger Hit animation (only if not currently in Death/PhaseChange)
+    if (this._hasAnims && this._currentAnimName !== 'Death' && this._currentAnimName !== 'PhaseChange') {
+      this.playAnim('Hit', 0.1, true);
+    }
     if (this.hp <= 0) {
       this.dead = true;
       this._deathT = 0;
+      this.setBossState('DEAD');
       this.onDeath && this.onDeath(this);
     }
   }
@@ -492,7 +616,12 @@ export class WardenBoss {
     this._slowT = duration;
   }
 
-  onCast() {}
+  onCast() {
+    // Trigger Cast animation when boss attacks
+    if (this._hasAnims && this._currentAnimName !== 'Death') {
+      this.playAnim('Cast', 0.1, true);
+    }
+  }
 
   setPhase2() {
     this.phase2 = true;
@@ -501,6 +630,7 @@ export class WardenBoss {
     this.fogMat.opacity = 0.5;
     if (this._chestCoreMat) this._chestCoreMat.opacity = 1.0;
     if (this._chestLight) this._chestLight.intensity = 4;
+    // PhaseChange animation handled by BossBattleController via setBossState('PHASE_CHANGE')
   }
 
   show() {
@@ -544,6 +674,17 @@ export class WardenBoss {
         mat.emissive.setHex(mat._origEmissive);
         mat.emissiveIntensity = mat._origEmissiveIntensity;
       }
+    }
+
+    // Reset animations — stop all, return to Idle
+    if (this._mixer) {
+      for (const name of Object.keys(this._animations)) {
+        this._animations[name].stop();
+      }
+      this._currentAction = null;
+      this._currentAnimName = null;
+      this._bossState = 'IDLE';
+      this.playAnim('Idle', 0.1, true);
     }
   }
 }
