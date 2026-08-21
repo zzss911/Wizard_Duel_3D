@@ -695,8 +695,11 @@ export class Game {
     this.arena.update(dt);
     this.props.update(dt);
 
-    // 摄像机
-    this.updateCamera(dt);
+    // 摄像机：cinematic 期间由 CameraDirector 控制，否则正常更新
+    const cinematicActive = this.bossController.cameraDirector.update(dt);
+    if (!cinematicActive) {
+      this.updateCamera(dt);
+    }
 
     // HUD：只显示玩家血条和技能冷却
     this.hud.update(this.player, this.player, null);
@@ -787,6 +790,7 @@ export class Game {
 
     this.bossController.onComplete = (action) => this._onBossComplete(action);
     this.bossController.onShake = (power) => this.addShake(power);
+    this.bossController.setCamera(this.camera);
     this.bossController.start(this.player, this.arena);
 
     this.input.setGameplayEnabled(true);

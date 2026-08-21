@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { WardenBoss } from './WardenBoss.js';
 import { WardenAI } from './WardenAI.js';
+import { BossCinematicUI } from '../ui/BossCinematicUI.js';
+import { BossCameraDirector, CINEMATIC } from './BossCameraDirector.js';
 
 /**
  * BossBattleController —— Boss 战控制器
@@ -47,6 +49,10 @@ export class BossBattleController {
     this.onExit = null; // () => void
     this.onShake = null; // (power) => void — camera shake callback
 
+    // Cinematic systems
+    this.cinematicUI = new BossCinematicUI();
+    this.cameraDirector = new BossCameraDirector();
+
     // 临时光源（Boss 模式暗色环境）
     this._bossLight = null;
     this._introCamera = null;
@@ -68,6 +74,7 @@ export class BossBattleController {
       this.ai.audio = this.audio;
       this.ai.hud = this.hud;
       this.ai.onShake = (power) => this.onShake?.(power);
+      this.ai.onSkillTelegraph = (skillId) => this._onSkillTelegraph(skillId);
     }
     this.ai.reset();
 
@@ -91,6 +98,11 @@ export class BossBattleController {
     }
   }
 
+  /** Set camera reference for cinematic sequences */
+  setCamera(camera) {
+    this._camera = camera;
+  }
+
   _showLoadingText() {
     const el = document.getElementById('boss-loading-text');
     if (el) el.style.display = 'block';
@@ -110,6 +122,16 @@ export class BossBattleController {
     this.boss.showIntroRune();
     this.boss.setInvulnerable(5.0);
     this.player.reset();
+
+    // Start cinematic camera
+    if (this._camera) {
+      this.cameraDirector.startCinematic(this._camera, CINEMATIC.INTRO, {
+        bossPos: this.boss.position.clone(),
+        playerPos: this.player.position.clone(),
+        duration: 4.5,
+      });
+    }
+    this._introPhase = 0;
   }
 
   update(dt, player, arena) {
@@ -160,43 +182,86 @@ export class BossBattleController {
 
   _updateIntro(dt, player, arena) {
     const t = this.timer;
-    // 0~1.0s: 画面变暗 + 镜头看向 Boss 位置
-    // 1.0~2.0s: 地面红色法阵亮起
-    // 2.0~3.0s: 黑雾出现 + Boss 出现
-    // 3.0~3.5s: Boss 砸地 + 镜头震动
-    // 3.5~4.5s: 显示名字 + 血条出现
-    // 4.5s: FIGHT!
 
-    if (t >= 2.0 && !this.boss.group.visible) {
-      this.boss.show();
-      this.boss.fog.visible = true;
+    // Phase 1 (0~0.8s): Dark, rune lights up, black-red fog gathers
+    if (t < 0.8) {
+      const tp = t / 0.8;
+      // Rune gradually brightens
+      if (this.boss.groundRuneMat) {
+        this.boss.groundRuneMat.opacity = tp * 0.6;
+      }
     }
 
-    if (t >= 3.0 && t < 3.1) {
-      // Boss 砸地
+    // Phase 2 (0.8~1.8s): Boss appears from fog
+    if (t >= 0.8 && t < 1.8) {
+      const tp = (t - 0.8) / 1.0;
+      if (!this.boss.group.visible) {
+        this.boss.show();
+        this.boss.fog.visible = true;
+        // Start with scale 0 for reveal effect
+        this.boss.visualRoot.scale.setScalar(0.01);
+      }
+      // Scale up with ease
+      const ease = tp < 0.5 ? 2 * tp * tp : -1 + (4 - 2 * tp) * tp;
+      this.boss.visualRoot.scale.setScalar(Math.max(0.01, ease));
+      // Rune full bright
+      if (this.boss.groundRuneMat) {
+        this.boss.groundRuneMat.opacity = 0.6 + tp * 0.4;
+      }
+    }
+
+    // Phase 3 (1.8~2.6s): Boss eyes/chest light up, slight shake
+    if (t >= 1.8 && t < 2.6) {
+      const tp = (t - 1.8) / 0.8;
+      this.boss.visualRoot.scale.setScalar(1);
+      // Increase cast glow for eye/chest activation
+      this.boss.setCastGlow(tp * 0.5);
+      // First small shake at 1.8s
+      if (t >= 1.8 && t < 1.85 && !this._introShake1) {
+        this._introShake1 = true;
+        if (this.onShake) this.onShake(0.4);
+        this.audio.playExplosion(0.5, 12);
+      }
+    }
+
+    // Phase 4 (2.6~3.6s): Boss slams, title appears
+    if (t >= 2.6 && !this._introSlam) {
+      this._introSlam = true;
       this.boss.setCastGlow(1);
       this.explosion.playMagicExplosion(
         new THREE.Vector3(this.boss.position.x, 0.5, this.boss.position.z),
         1.5
       );
       this.audio.playExplosion(1.5, 10);
+      if (this.onShake) this.onShake(0.8);
     }
 
-    if (t >= 3.5 && t < 3.6) {
-      this.boss.setCastGlow(0);
+    if (t >= 2.8 && t < 2.9) {
+      this.boss.setCastGlow(0.3);
     }
 
-    if (t >= 3.5 && !this._showedName) {
+    // Show boss title at 2.8s
+    if (t >= 2.8 && !this._showedTitle) {
+      this._showedTitle = true;
+      this.cinematicUI.showBossTitle();
+    }
+
+    // Phase 5 (3.6~4.5s): Health bar appears, FIGHT flash
+    if (t >= 3.6 && !this._showedName) {
       this._showedName = true;
       this.bossHealthBar.show('典狱长', 'THE WARDEN', 'PHASE I');
     }
 
-    if (t >= 4.5 && !this._fightStarted) {
+    if (t >= 4.0 && !this._fightStarted) {
       this._fightStarted = true;
-      this.hud.showBanner('FIGHT!', 1.2);
+      this.cinematicUI.showFight();
+    }
+
+    if (t >= 4.5) {
       this.state = BOSS_STATE.PHASE1;
       this.timer = 0;
       this.startTime = performance.now();
+      this.cameraDirector.cancel();
     }
   }
 
@@ -233,21 +298,44 @@ export class BossBattleController {
     this.bossHealthBar.updateHP(this.boss.hp, this.boss.maxHp);
   }
 
+  /** Called when AI enters TELEGRAPH for a skill */
+  _onSkillTelegraph(skillId) {
+    const isDangerous = (skillId === 'DEATH_CAGE');
+    this.cinematicUI.showSkillName(skillId, isDangerous);
+  }
+
   _updatePhaseChange(dt, player, arena) {
     // 2.5s 转场
+    const t = this.timer;
+
+    // Phase II text at 0.5s
+    if (t >= 0.5 && !this._phase2TextShown) {
+      this._phase2TextShown = true;
+      this.cinematicUI.showPhase2();
+    }
+
     if (this.timer >= 2.5) {
       this.ai.setPhase2();
       this.state = BOSS_STATE.PHASE2;
       this.timer = 0;
       this.bossHealthBar.setPhase('PHASE II');
-      this.hud.showBanner('封锁解除', 1.5);
+      this.cameraDirector.cancel();
     }
     // Boss 不攻击但仍然面向玩家
     this.boss.faceTowards(player.position, dt);
   }
 
   _showPhaseChangeEffect() {
-    // Initial red flash on phase change start (mid-point burst handled by WardenAI)
+    // Start cinematic camera for phase change
+    if (this._camera) {
+      this.cameraDirector.startCinematic(this._camera, CINEMATIC.PHASE_CHANGE, {
+        bossPos: this.boss.position.clone(),
+        playerPos: this.player.position.clone(),
+        duration: 2.5,
+      });
+    }
+
+    // Initial red flash on phase change start
     this.explosion.playMagicExplosion(
       this.boss.headPosition,
       1.5
@@ -263,33 +351,85 @@ export class BossBattleController {
     this.timer = 0;
     // 清空弹道
     for (const p of this.combat.pool) p.despawn();
+
+    // Start death cinematic camera
+    if (this._camera) {
+      this.cameraDirector.startCinematic(this._camera, CINEMATIC.DEATH, {
+        bossPos: this.boss.position.clone(),
+        playerPos: this.player.position.clone(),
+        duration: 3.5,
+      });
+    }
   }
 
   _updateBossDeath(dt, player, arena) {
-    // 3~4s 死亡序列
+    // 3.5s 死亡序列
     const t = this.timer;
 
-    // 1.0s: 大爆炸
-    if (t > 1.0 && !this._deathExploded) {
-      this._deathExploded = true;
-      this.explosion.playMagicExplosion(this.boss.headPosition, 2.5);
-      this.audio.playExplosion(2.5, 6);
-      this.hud.screenFlash();
+    // 0.0~0.5s: Death animation starts, eye flicker, chest unstable
+    // (handled by WardenBoss.update death logic)
+
+    // 0.5s: First small explosion
+    if (t > 0.5 && !this._deathExploded1) {
+      this._deathExploded1 = true;
+      this.explosion.playMagicExplosion(this.boss.headPosition, 1.0);
+      this.audio.playExplosion(1.0, 8);
+      if (this.onShake) this.onShake(0.5);
     }
 
-    // 2.0s: 第二波爆炸
+    // 1.0s: Larger explosion
+    if (t > 1.0 && !this._deathExploded) {
+      this._deathExploded = true;
+      this.explosion.playMagicExplosion(this.boss.headPosition, 2.0);
+      this.audio.playExplosion(2.0, 6);
+      this.hud.screenFlash();
+      if (this.onShake) this.onShake(0.8);
+    }
+
+    // 1.5s: Chest/core destabilizes - another explosion
+    if (t > 1.5 && !this._deathExploded1b) {
+      this._deathExploded1b = true;
+      this.explosion.playMagicExplosion(
+        new THREE.Vector3(this.boss.position.x, 1.5, this.boss.position.z),
+        1.5
+      );
+      this.audio.playExplosion(1.5, 7);
+    }
+
+    // 2.0s: Second wave explosion
     if (t > 2.0 && !this._deathExploded2) {
       this._deathExploded2 = true;
       this.explosion.playMagicExplosion(
         new THREE.Vector3(this.boss.position.x, 1.0, this.boss.position.z),
-        2.0
+        2.5
       );
-      this.audio.playExplosion(2.0, 5);
+      this.audio.playExplosion(2.5, 5);
+      this.hud.screenFlash();
+      if (this.onShake) this.onShake(1.0);
     }
 
-    // 3.5s: 显示结算
-    if (t > 3.5 && !this._resultShown) {
+    // 2.5s: Final big dark red explosion + camera shake
+    if (t > 2.5 && !this._deathFinalBoom) {
+      this._deathFinalBoom = true;
+      this.explosion.playMagicExplosion(
+        new THREE.Vector3(this.boss.position.x, 1.2, this.boss.position.z),
+        3.0
+      );
+      this.audio.playExplosion(3.0, 4);
+      this.hud.screenFlash();
+      if (this.onShake) this.onShake(1.2);
+    }
+
+    // 3.0s: Show BOSS DEFEATED cinematic text
+    if (t > 3.0 && !this._defeatedTextShown) {
+      this._defeatedTextShown = true;
+      this.cinematicUI.showBossDefeated();
+    }
+
+    // 4.0s: Show result panel (after cinematic text fades)
+    if (t > 4.0 && !this._resultShown) {
       this._resultShown = true;
+      this.cameraDirector.cancel();
       this._showResult(true);
     }
   }
@@ -333,12 +473,23 @@ export class BossBattleController {
 
   _reset() {
     this._showedName = false;
+    this._showedTitle = false;
     this._fightStarted = false;
+    this._introShake1 = false;
+    this._introSlam = false;
+    this._introPhase = 0;
     this._deathExploded = false;
+    this._deathExploded1 = false;
+    this._deathExploded1b = false;
     this._deathExploded2 = false;
+    this._deathFinalBoom = false;
+    this._defeatedTextShown = false;
     this._resultShown = false;
+    this._phase2TextShown = false;
     this.phase2Triggered = false;
     this._hideLoadingText();
+    this.cinematicUI.clear();
+    this.cameraDirector.cancel();
     this.bossResultPanel.hide();
     this._restoreArena();
     if (this._bossLight) {
@@ -395,6 +546,8 @@ export class BossBattleController {
       this.boss = null;
     }
     this.ai = null;
+    this.cinematicUI.destroy();
+    this.cameraDirector.cancel();
   }
 }
 

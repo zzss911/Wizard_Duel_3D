@@ -1037,6 +1037,164 @@ html, body {
   0%, 100% { opacity: 0.5; }
   50% { opacity: 1; }
 }
+
+/* ====== Boss Cinematic UI ====== */
+.boss-cinematic-title {
+  position: absolute; top: 38%; left: 50%;
+  transform: translate(-50%, -50%) scale(1.15);
+  opacity: 0;
+  text-align: center;
+  transition: opacity 0.6s ease-out, transform 0.6s ease-out;
+}
+.boss-cinematic-title.show {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+.boss-cinematic-title.fade-out {
+  opacity: 0;
+  transition: opacity 0.5s ease-in;
+}
+.boss-cinematic-title-zh {
+  font-size: 48px; font-weight: bold;
+  color: #c82020;
+  letter-spacing: 12px;
+  text-shadow: 0 0 30px rgba(200,32,32,0.5), 0 2px 4px rgba(0,0,0,0.8);
+}
+.boss-cinematic-title-en {
+  font-size: 20px; font-weight: bold;
+  color: #888;
+  letter-spacing: 8px;
+  margin-top: 6px;
+}
+.boss-cinematic-title-sub {
+  font-size: 15px;
+  color: #a08080;
+  letter-spacing: 4px;
+  margin-top: 14px;
+  font-style: italic;
+}
+
+/* FIGHT */
+.boss-cinematic-fight {
+  position: absolute; top: 40%; left: 50%;
+  transform: translate(-50%, -50%) scale(2);
+  opacity: 0;
+  font-size: 56px; font-weight: bold;
+  color: #ffcc00;
+  letter-spacing: 6px;
+  text-shadow: 0 0 40px rgba(255,200,0,0.6), 0 2px 6px rgba(0,0,0,0.9);
+  transition: opacity 0.2s ease-out, transform 0.3s ease-out;
+}
+.boss-cinematic-fight.show {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+.boss-cinematic-fight.fade-out {
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.8);
+  transition: opacity 0.4s ease-in, transform 0.4s ease-in;
+}
+
+/* Skill Name */
+.boss-cinematic-skill {
+  position: absolute; top: 22%; left: 50%;
+  transform: translate(-50%, 0);
+  opacity: 0;
+  text-align: center;
+  transition: opacity 0.25s ease-out, transform 0.25s ease-out;
+}
+.boss-cinematic-skill.show {
+  opacity: 1;
+  transform: translate(-50%, -8px);
+}
+.boss-cinematic-skill.fade-out {
+  opacity: 0;
+  transform: translate(-50%, -20px);
+  transition: opacity 0.4s ease-in, transform 0.4s ease-in;
+}
+.boss-skill-zh {
+  display: block;
+  font-size: 22px; font-weight: bold;
+  color: #ff4444;
+  letter-spacing: 6px;
+  text-shadow: 0 0 20px rgba(255,40,40,0.4), 0 1px 3px rgba(0,0,0,0.9);
+}
+.boss-skill-en {
+  display: block;
+  font-size: 12px; font-weight: bold;
+  color: #996666;
+  letter-spacing: 4px;
+  margin-top: 2px;
+}
+.boss-cinematic-skill.dangerous .boss-skill-zh {
+  color: #ff2020;
+  text-shadow: 0 0 30px rgba(255,20,20,0.7), 0 1px 3px rgba(0,0,0,0.9);
+  animation: bossSkillDangerFlash 0.4s ease-in-out 2;
+}
+@keyframes bossSkillDangerFlash {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Phase II */
+.boss-cinematic-phase2 {
+  position: absolute; top: 35%; left: 50%;
+  transform: translate(-50%, -50%) scale(1.1);
+  opacity: 0;
+  text-align: center;
+  transition: opacity 0.4s ease-out, transform 0.4s ease-out;
+}
+.boss-cinematic-phase2.show {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+.boss-cinematic-phase2.fade-out {
+  opacity: 0;
+  transition: opacity 0.5s ease-in;
+}
+.boss-phase2-zh {
+  font-size: 36px; font-weight: bold;
+  color: #ff3030;
+  letter-spacing: 10px;
+  text-shadow: 0 0 30px rgba(255,40,40,0.5), 0 2px 4px rgba(0,0,0,0.8);
+}
+.boss-phase2-en {
+  font-size: 18px; font-weight: bold;
+  color: #aa4444;
+  letter-spacing: 8px;
+  margin-top: 4px;
+}
+
+/* Boss Defeated */
+.boss-cinematic-defeated {
+  position: absolute; top: 38%; left: 50%;
+  transform: translate(-50%, -50%) scale(1.1);
+  opacity: 0;
+  text-align: center;
+  transition: opacity 0.6s ease-out, transform 0.6s ease-out;
+}
+.boss-cinematic-defeated.show {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+.boss-cinematic-defeated.fade-out {
+  opacity: 0;
+  transition: opacity 0.5s ease-in;
+}
+.boss-defeated-zh {
+  font-size: 42px; font-weight: bold;
+  color: #ffcc00;
+  letter-spacing: 8px;
+  text-shadow: 0 0 40px rgba(255,200,0,0.5), 0 2px 4px rgba(0,0,0,0.8);
+}
+.boss-defeated-name {
+  font-size: 24px; font-weight: bold;
+  color: #c82020;
+  letter-spacing: 8px;
+  margin-top: 8px;
+}
+
+/* ====== End Cinematic UI ====== */
 .boss-result-card {
   text-align: center;
   max-width: 480px; width: 90%;

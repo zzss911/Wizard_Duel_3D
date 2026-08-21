@@ -115,6 +115,8 @@ export class WardenAI {
     this._phaseChangeMidFired = false;
     // Callback for camera shake (set by BossBattleController)
     this.onShake = null;
+    // Callback for skill telegraph notification (set by BossBattleController)
+    this.onSkillTelegraph = null;
   }
 
   reset() {
@@ -191,10 +193,16 @@ export class WardenAI {
         this._spawnQuakeWave(arenaRef);
         this.explosion.playMagicExplosion(
           new THREE.Vector3(this.boss.position.x, 0.3, this.boss.position.z),
-          1.2
+          1.5
         );
-        this.audio.playExplosion(1.5, 8);
-        if (this.onShake) this.onShake(1.0);
+        this.audio.playExplosion(2.0, 6);
+        this.hud?.screenFlash?.();
+        this.effects.burst(
+          new THREE.Vector3(this.boss.position.x, 0.2, this.boss.position.z),
+          0x8a6040, 18
+        );
+        if (this.onShake) this.onShake(1.5);
+        if (this.boss.groundRuneMat) this.boss.groundRuneMat.opacity = 1.0;
       }
     }
 
@@ -204,6 +212,11 @@ export class WardenAI {
         this._pendingBolt = false;
         const target = this._pendingBoltTarget || player;
         this._fireBolt(target);
+        // Cast flash at cast anchor
+        this.boss.getCastOrigin(this._tmp);
+        this.effects.burst(this._tmp, 0xff3030, 8);
+        // Minor camera shake (much weaker than Quake)
+        if (this.onShake) this.onShake(0.3);
         if (this.phase === 2) {
           this._boltCount = 1;
           this._boltTimer = 0.35;
@@ -213,13 +226,21 @@ export class WardenAI {
         this._pendingQuake = false;
         const arenaRef = this._pendingQuakeArena || arena;
         this._spawnQuakeWave(arenaRef);
-        // Camera shake + explosion on impact frame
+        // Enhanced impact: ground explosion + screen flash + dust + strong shake
         this.explosion.playMagicExplosion(
           new THREE.Vector3(this.boss.position.x, 0.3, this.boss.position.z),
-          1.2
+          1.5
         );
-        this.audio.playExplosion(1.5, 8);
-        if (this.onShake) this.onShake(1.0);
+        this.audio.playExplosion(2.0, 6);
+        this.hud?.screenFlash?.();
+        // Dust burst
+        this.effects.burst(
+          new THREE.Vector3(this.boss.position.x, 0.2, this.boss.position.z),
+          0x8a6040, 18
+        );
+        if (this.onShake) this.onShake(1.5);
+        // Ground rune flash
+        if (this.boss.groundRuneMat) this.boss.groundRuneMat.opacity = 1.0;
       }
     }
 
@@ -257,6 +278,8 @@ export class WardenAI {
         if (this.attackHistory.length > 4) this.attackHistory.shift();
         this._beginTelegraph(skill, player);
         this._syncAnimState();
+        // Notify controller for skill name display
+        if (this.onSkillTelegraph) this.onSkillTelegraph(skill);
         break;
       }
 
@@ -654,6 +677,11 @@ export class WardenAI {
           } else {
             this.effects.burst(center, 0xff2a1a, 14);
           }
+          // Ring flash on trigger
+          z.ring.material.opacity = 1.0;
+          z.ring.material.color.setHex(0xff6020);
+          // Audio for chain trigger
+          this.audio?.playExplosion?.(0.8, 10);
           break;
         }
 
@@ -681,6 +709,14 @@ export class WardenAI {
 
         case ZONE_PHASE.CLEANUP: {
           z.cleanupT += dt;
+          // Particle dissipation on cleanup
+          if (z.cleanupT < 0.05 && !z._cleanupBurst) {
+            z._cleanupBurst = true;
+            this.effects.burst(
+              new THREE.Vector3(z.pos.x, 0.5, z.pos.z),
+              0x4a2020, 6
+            );
+          }
           if (z.cleanupT > 0.4) {
             this.scene.remove(z.ring);
             this.scene.remove(z.disc);
