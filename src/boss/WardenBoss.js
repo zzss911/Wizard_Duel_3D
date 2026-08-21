@@ -65,7 +65,13 @@ function loadWardenGLB() {
       _loader.load(
         url,
         (gltf) => resolve({ scene: gltf.scene, animations: gltf.animations || [], hasAnims: (gltf.animations || []).length > 0 }),
-        undefined,
+        (progress) => {
+          if (progress.total > 0) {
+            const pct = Math.round((progress.loaded / progress.total) * 100);
+            const el = document.getElementById('boss-loading-text');
+            if (el) el.textContent = `典狱长正在苏醒…… ${pct}%`;
+          }
+        },
         (err) => {
           if (!isFallback) {
             console.warn('[WardenBoss] warden_rigged.glb not found, trying warden.glb...');

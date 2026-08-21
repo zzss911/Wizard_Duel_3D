@@ -19,3 +19,5 @@ __pycache__/
 
 # Temp
 tmp/
+assets/models/warden_rigged_original.glb
+__pw_browser_take_screenshot_*.png
