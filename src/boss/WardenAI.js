@@ -23,11 +23,12 @@ const STATE = {
 };
 
 // Map WardenAI state → animation state name (for WardenBoss.setBossState)
+// TELEGRAPH maps to IDLE — Cast/Slam one-shots start at _executeAttack time
 const ANIM_STATE_MAP = {
   [STATE.IDLE]: 'IDLE',
   [STATE.CHOOSE]: 'IDLE',
-  [STATE.TELEGRAPH]: 'TELEGRAPH',
-  [STATE.ATTACK]: 'TELEGRAPH',
+  [STATE.TELEGRAPH]: 'IDLE',
+  [STATE.ATTACK]: 'IDLE',
   [STATE.RECOVER]: 'RECOVER',
   [STATE.PHASE_CHANGE]: 'PHASE_CHANGE',
   [STATE.DEAD]: 'DEAD',
@@ -107,8 +108,10 @@ export class WardenAI {
     // Deferred skill effect spawns — wait for animation impact frame
     this._pendingBolt = false;
     this._pendingBoltTarget = null;
+    this._pendingBoltTimer = 0; // safety timeout for pending bolt
     this._pendingQuake = false;
     this._pendingQuakeArena = null;
+    this._pendingQuakeTimer = 0; // safety timeout for pending quake
     this._phaseChangeMidFired = false;
     // Callback for camera shake (set by BossBattleController)
     this.onShake = null;
@@ -128,8 +131,10 @@ export class WardenAI {
     this._boltTimer = 0;
     this._pendingBolt = false;
     this._pendingBoltTarget = null;
+    this._pendingBoltTimer = 0;
     this._pendingQuake = false;
     this._pendingQuakeArena = null;
+    this._pendingQuakeTimer = 0;
     this._phaseChangeMidFired = false;
     this.boss.setCastGlow(0);
     this._syncAnimState();
@@ -162,6 +167,36 @@ export class WardenAI {
 
     this._updateZones(dt, player);
     this._updateQuakeWave(dt, player);
+
+    // Tick pending timers (safety net for when consumeImpact never fires)
+    if (this._pendingBolt) {
+      this._pendingBoltTimer -= dt;
+      if (this._pendingBoltTimer <= 0) {
+        // Timeout: fire immediately (consumeImpact missed or anim interrupted)
+        this._pendingBolt = false;
+        const target = this._pendingBoltTarget || player;
+        this._fireBolt(target);
+        if (this.phase === 2) {
+          this._boltCount = 1;
+          this._boltTimer = 0.35;
+        }
+      }
+    }
+    if (this._pendingQuake) {
+      this._pendingQuakeTimer -= dt;
+      if (this._pendingQuakeTimer <= 0) {
+        // Timeout: spawn immediately
+        this._pendingQuake = false;
+        const arenaRef = this._pendingQuakeArena || arena;
+        this._spawnQuakeWave(arenaRef);
+        this.explosion.playMagicExplosion(
+          new THREE.Vector3(this.boss.position.x, 0.3, this.boss.position.z),
+          1.2
+        );
+        this.audio.playExplosion(1.5, 8);
+        if (this.onShake) this.onShake(1.0);
+      }
+    }
 
     // Check for animation impact frame — fire deferred skill effects
     if (this.boss.consumeImpact()) {
@@ -300,7 +335,9 @@ export class WardenAI {
     this._clearQuakeWave();
     this._boltCount = 0;
     this._pendingBolt = false;
+    this._pendingBoltTimer = 0;
     this._pendingQuake = false;
+    this._pendingQuakeTimer = 0;
     this._syncAnimState();
   }
 
@@ -443,25 +480,51 @@ export class WardenAI {
 
   _executeAttack(skill, player, arena) {
     const cfg = SKILL_CONFIG[skill];
-
-    // QUAKE triggers Slam one-shot at attack execution; other skills
-    // already have Cast playing from TELEGRAPH state — don't override.
-    if (skill === SKILLS.QUAKE) {
-      this.boss.playOneShot('Slam', 0.1);
-    }
+    const hasAnims = this.boss._hasAnims;
 
     if (skill === SKILLS.CHAIN) {
       // 锁链区域已在 _beginTelegraph 时以 WARNING 阶段生成，
       // _updateZones 会自动完成 WARNING→TRIGGER→DAMAGE→CLEANUP，
       // 这里不需要手动触发。
+      // CHAIN 可以播放 Cast 动画作为视觉装饰（非必要）
+      if (hasAnims) {
+        this.boss.playOneShot('Cast', 0.1);
+      }
     } else if (skill === SKILLS.MAGIC_BOLT) {
-      // Deferred: wait for Cast animation impact frame (~60%) to fire bolt
-      this._pendingBolt = true;
-      this._pendingBoltTarget = player;
+      // Start Cast one-shot NOW (not during TELEGRAPH) so consumeImpact()
+      // fires at 60% with _pendingBolt already set.
+      if (hasAnims) {
+        this.boss.playOneShot('Cast', 0.1);
+        this._pendingBolt = true;
+        this._pendingBoltTarget = player;
+        // Safety timeout: if consumeImpact hasn't fired in 2s, fire anyway
+        this._pendingBoltTimer = 2.0;
+      } else {
+        // Fallback (no skeletal anims): fire immediately
+        this._fireBolt(player);
+        if (this.phase === 2) {
+          this._boltCount = 1;
+          this._boltTimer = 0.35;
+        }
+      }
     } else if (skill === SKILLS.QUAKE) {
-      // Deferred: wait for Slam animation impact frame (~70%) to spawn wave
-      this._pendingQuake = true;
-      this._pendingQuakeArena = arena;
+      // Start Slam one-shot NOW so consumeImpact() fires at 70% with _pendingQuake set.
+      if (hasAnims) {
+        this.boss.playOneShot('Slam', 0.1);
+        this._pendingQuake = true;
+        this._pendingQuakeArena = arena;
+        // Safety timeout: if consumeImpact hasn't fired in 2s, spawn anyway
+        this._pendingQuakeTimer = 2.0;
+      } else {
+        // Fallback (no skeletal anims): spawn immediately
+        this._spawnQuakeWave(arena);
+        this.explosion.playMagicExplosion(
+          new THREE.Vector3(this.boss.position.x, 0.3, this.boss.position.z),
+          1.2
+        );
+        this.audio.playExplosion(1.5, 8);
+        if (this.onShake) this.onShake(1.0);
+      }
     } else if (skill === SKILLS.DEATH_CAGE) {
       // 死亡牢笼区域已在 _beginTelegraph 时以带 staggered delay 的 WARNING 阶段生成，
       // 每个 zone 独立执行 delay→WARNING(warnTime)→TRIGGER→DAMAGE→CLEANUP，

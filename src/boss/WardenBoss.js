@@ -35,10 +35,12 @@ const ANIM_IMPACT_TIME = {
 };
 
 // State → animation mapping
+// TELEGRAPH does NOT map to Cast — Cast one-shot starts at _executeAttack time
+// so consumeImpact() fires at the correct frame with _pendingBolt already set.
 const STATE_ANIM_MAP = {
   IDLE: 'Idle',
   RECOVER: 'Idle',
-  TELEGRAPH: 'Cast',
+  TELEGRAPH: 'Idle',
   MAGIC_BOLT: 'Cast',
   CHAIN: 'Cast',
   QUAKE: 'Slam',
@@ -474,20 +476,19 @@ export class WardenBoss {
       return;
     }
 
-    // QUAKE maps to Slam (one-shot)
+    // QUAKE maps to Slam (one-shot) — started by WardenAI._executeAttack, not here
     if (state === 'QUAKE') {
-      this.playOneShot('Slam', 0.15);
-      return;
+      return; // Slam one-shot is started explicitly by WardenAI
     }
 
-    // TELEGRAPH/MAGIC_BOLT/CHAIN → Cast (one-shot)
-    if (state === 'TELEGRAPH' || state === 'MAGIC_BOLT' || state === 'CHAIN') {
-      this.playOneShot('Cast', 0.15);
-      return;
+    // MAGIC_BOLT/CHAIN → Cast (one-shot) — started by WardenAI._executeAttack, not here
+    if (state === 'MAGIC_BOLT' || state === 'CHAIN') {
+      return; // Cast one-shot is started explicitly by WardenAI
     }
 
-    // IDLE/RECOVER → Idle (looping, can be deferred if one-shot is active)
-    if (state === 'IDLE' || state === 'RECOVER') {
+    // TELEGRAPH/IDLE/RECOVER → Idle (looping)
+    // TELEGRAPH plays Idle with cast glow; Cast one-shot starts at _executeAttack
+    if (state === 'TELEGRAPH' || state === 'IDLE' || state === 'RECOVER') {
       this.playAnim('Idle', this._animFadeTime);
       return;
     }
