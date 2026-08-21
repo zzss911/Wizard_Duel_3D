@@ -786,6 +786,7 @@ export class Game {
     );
 
     this.bossController.onComplete = (action) => this._onBossComplete(action);
+    this.bossController.onShake = (power) => this.addShake(power);
     this.bossController.start(this.player, this.arena);
 
     this.input.setGameplayEnabled(true);

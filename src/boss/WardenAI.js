@@ -89,6 +89,8 @@ export class WardenAI {
     this.scene = scene;
     this.effects = effects;
     this.explosion = explosion;
+    this.audio = null;
+    this.hud = null;
     this.state = STATE.IDLE;
     this.timer = 2.0;
     this.lastAttack = null;
@@ -102,6 +104,14 @@ export class WardenAI {
     this._quakeWave = null;
     this._boltCount = 0;
     this._boltTimer = 0;
+    // Deferred skill effect spawns — wait for animation impact frame
+    this._pendingBolt = false;
+    this._pendingBoltTarget = null;
+    this._pendingQuake = false;
+    this._pendingQuakeArena = null;
+    this._phaseChangeMidFired = false;
+    // Callback for camera shake (set by BossBattleController)
+    this.onShake = null;
   }
 
   reset() {
@@ -116,6 +126,11 @@ export class WardenAI {
     this._quakeWave = null;
     this._boltCount = 0;
     this._boltTimer = 0;
+    this._pendingBolt = false;
+    this._pendingBoltTarget = null;
+    this._pendingQuake = false;
+    this._pendingQuakeArena = null;
+    this._phaseChangeMidFired = false;
     this.boss.setCastGlow(0);
     this._syncAnimState();
   }
@@ -147,6 +162,31 @@ export class WardenAI {
 
     this._updateZones(dt, player);
     this._updateQuakeWave(dt, player);
+
+    // Check for animation impact frame — fire deferred skill effects
+    if (this.boss.consumeImpact()) {
+      if (this._pendingBolt) {
+        this._pendingBolt = false;
+        const target = this._pendingBoltTarget || player;
+        this._fireBolt(target);
+        if (this.phase === 2) {
+          this._boltCount = 1;
+          this._boltTimer = 0.35;
+        }
+      }
+      if (this._pendingQuake) {
+        this._pendingQuake = false;
+        const arenaRef = this._pendingQuakeArena || arena;
+        this._spawnQuakeWave(arenaRef);
+        // Camera shake + explosion on impact frame
+        this.explosion.playMagicExplosion(
+          new THREE.Vector3(this.boss.position.x, 0.3, this.boss.position.z),
+          1.2
+        );
+        this.audio.playExplosion(1.5, 8);
+        if (this.onShake) this.onShake(1.0);
+      }
+    }
 
     if (this._boltCount > 0) {
       this._boltTimer -= dt;
@@ -218,6 +258,22 @@ export class WardenAI {
 
       case STATE.PHASE_CHANGE:
         b.setCastGlow(0);
+        // Mid-point burst at ~50% of PhaseChange animation
+        if (!this._phaseChangeMidFired) {
+          const progress = this.boss.getOneShotProgress();
+          if (progress >= 0.45) {
+            this._phaseChangeMidFired = true;
+            this.explosion.playMagicExplosion(
+              this.boss.headPosition, 2.0
+            );
+            this.audio.playExplosion(2.0, 8);
+            this.hud?.screenFlash?.();
+            if (this.onShake) this.onShake(1.5);
+            // Ground rune pulse
+            this.boss.groundRuneMat.opacity = 1.0;
+            this.boss.groundRune.visible = true;
+          }
+        }
         if (this.timer <= 0) {
           this.state = STATE.IDLE;
           this.timer = 1.0;
@@ -237,11 +293,14 @@ export class WardenAI {
   triggerPhaseChange() {
     this.state = STATE.PHASE_CHANGE;
     this.timer = 2.5;
+    this._phaseChangeMidFired = false;
     this.boss.setInvulnerable(2.5);
     this.boss.setCastGlow(0);
     this._clearZones();
     this._clearQuakeWave();
     this._boltCount = 0;
+    this._pendingBolt = false;
+    this._pendingQuake = false;
     this._syncAnimState();
   }
 
@@ -396,13 +455,13 @@ export class WardenAI {
       // _updateZones 会自动完成 WARNING→TRIGGER→DAMAGE→CLEANUP，
       // 这里不需要手动触发。
     } else if (skill === SKILLS.MAGIC_BOLT) {
-      this._fireBolt(player);
-      if (this.phase === 2) {
-        this._boltCount = 1;
-        this._boltTimer = 0.35;
-      }
+      // Deferred: wait for Cast animation impact frame (~60%) to fire bolt
+      this._pendingBolt = true;
+      this._pendingBoltTarget = player;
     } else if (skill === SKILLS.QUAKE) {
-      this._spawnQuakeWave(arena);
+      // Deferred: wait for Slam animation impact frame (~70%) to spawn wave
+      this._pendingQuake = true;
+      this._pendingQuakeArena = arena;
     } else if (skill === SKILLS.DEATH_CAGE) {
       // 死亡牢笼区域已在 _beginTelegraph 时以带 staggered delay 的 WARNING 阶段生成，
       // 每个 zone 独立执行 delay→WARNING(warnTime)→TRIGGER→DAMAGE→CLEANUP，

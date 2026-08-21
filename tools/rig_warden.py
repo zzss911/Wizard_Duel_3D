@@ -492,108 +492,227 @@ def create_animations(armature, dims):
     # Animation definitions: (name, duration_frames, is_loop, keyframes)
     # Each keyframe: (bone_name, attribute, frame, value_tuple)
     # value_tuple is a full 3-element vector (x, y, z)
+    #
+    # Coordinate system: Z=up, X=left/right, Y=forward/back
+    # Right arm (Arm_R, Hand_R, weapon) is at -X side
+    # Left arm (Arm_L, Hand_L) is at +X side
+    # rotation_euler (X, Y, Z) in radians:
+    #   X rotation = pitch (forward/back lean)
+    #   Y rotation = yaw (left/right turn)
+    #   Z rotation = roll (arms spread/contract)
+    # Blender default FPS = 24
+
     anim_defs = {
         'Idle': {
-            'duration': 60,
+            'duration': 72,
             'loop': True,
             'keyframes': [
-                # Breathing: chest scale
+                # Breathing: chest scale pulsing
                 ('Chest', 'scale', 1,  (1.0, 1.0, 1.02)),
-                ('Chest', 'scale', 30, (1.0, 1.0, 0.98)),
-                ('Chest', 'scale', 60, (1.0, 1.0, 1.02)),
+                ('Chest', 'scale', 36, (1.0, 1.0, 0.99)),
+                ('Chest', 'scale', 72, (1.0, 1.0, 1.02)),
                 # Head slight bob
-                ('Head', 'location', 1,  (0.0, 0.0, 0.01 * h)),
-                ('Head', 'location', 30, (0.0, 0.0, -0.01 * h)),
-                ('Head', 'location', 60, (0.0, 0.0, 0.01 * h)),
+                ('Head', 'location', 1,  (0.0, 0.0, 0.008 * h)),
+                ('Head', 'location', 36, (0.0, 0.0, -0.008 * h)),
+                ('Head', 'location', 72, (0.0, 0.0, 0.008 * h)),
+                # Shoulders very slight rise/fall
+                ('Shoulder_L', 'location', 1,  (0.0, 0.0, 0.005 * h)),
+                ('Shoulder_L', 'location', 36, (0.0, 0.0, -0.005 * h)),
+                ('Shoulder_L', 'location', 72, (0.0, 0.0, 0.005 * h)),
+                ('Shoulder_R', 'location', 1,  (0.0, 0.0, 0.005 * h)),
+                ('Shoulder_R', 'location', 36, (0.0, 0.0, -0.005 * h)),
+                ('Shoulder_R', 'location', 72, (0.0, 0.0, 0.005 * h)),
             ],
         },
+
+        # ─── Cast: 蓄力→抬手/抬杖→向前释放→回收 ───
+        # Duration: ~0.9s (22 frames at 24fps)
+        # Impact at ~60% = frame 13
+        # Motion: slow shoulder raise → staff thrust forward → recover
         'Cast': {
-            'duration': 30,
+            'duration': 22,
             'loop': False,
             'keyframes': [
-                # Arms raise forward (Y rotation)
-                ('Arm_L', 'rotation_euler', 1,  (0.0, -0.3, 0.0)),
-                ('Arm_R', 'rotation_euler', 1,  (0.0, 0.3, 0.0)),
-                ('Arm_L', 'rotation_euler', 15, (0.0, -0.6, 0.0)),
-                ('Arm_R', 'rotation_euler', 15, (0.0, 0.6, 0.0)),
-                ('Arm_L', 'rotation_euler', 30, (0.0, -0.4, 0.0)),
-                ('Arm_R', 'rotation_euler', 30, (0.0, 0.4, 0.0)),
-                # Chest puffs
+                # Frame 1: Rest pose
+                ('Arm_R', 'rotation_euler', 1,  (0.0, 0.0, 0.0)),
+                ('Arm_L', 'rotation_euler', 1,  (0.0, 0.0, 0.0)),
+                ('Chest', 'rotation_euler', 1,  (0.0, 0.0, 0.0)),
                 ('Chest', 'scale', 1,  (1.0, 1.0, 1.0)),
-                ('Chest', 'scale', 15, (1.0, 1.0, 1.05)),
-                ('Chest', 'scale', 30, (1.0, 1.0, 1.0)),
+                ('Shoulder_R', 'rotation_euler', 1,  (0.0, 0.0, 0.0)),
+                ('Shoulder_L', 'rotation_euler', 1,  (0.0, 0.0, 0.0)),
+                ('Root', 'location', 1,  (0.0, 0.0, 0.0)),
+
+                # Frame 8 (~0.33s): Charge — staff raised, chest puffed
+                # Right arm rotates to raise staff (Z rotation brings arm inward/up)
+                ('Arm_R', 'rotation_euler', 8,  (-0.4, -0.3, -0.2)),
+                ('Arm_L', 'rotation_euler', 8,  (-0.2, 0.2, 0.3)),
+                ('Chest', 'rotation_euler', 8,  (-0.05, 0.0, 0.0)),
+                ('Chest', 'scale', 8,  (1.02, 1.02, 1.04)),
+                ('Shoulder_R', 'rotation_euler', 8,  (-0.15, 0.0, 0.0)),
+                ('Shoulder_L', 'rotation_euler', 8,  (-0.1, 0.0, 0.0)),
+                ('Root', 'location', 8,  (0.0, 0.0, 0.0)),
+
+                # Frame 13 (~0.54s): RELEASE — staff thrust forward
+                # This is the impact frame (~60%)
+                ('Arm_R', 'rotation_euler', 13, (-0.7, -0.5, -0.1)),
+                ('Arm_L', 'rotation_euler', 13, (-0.3, 0.4, 0.5)),
+                ('Chest', 'rotation_euler', 13, (0.08, 0.0, 0.0)),
+                ('Chest', 'scale', 13, (1.0, 1.0, 1.02)),
+                ('Shoulder_R', 'rotation_euler', 13, (-0.25, 0.0, 0.0)),
+                ('Shoulder_L', 'rotation_euler', 13, (-0.15, 0.0, 0.0)),
+
+                # Frame 22 (~0.92s): Recover to rest
+                ('Arm_R', 'rotation_euler', 22, (0.0, 0.0, 0.0)),
+                ('Arm_L', 'rotation_euler', 22, (0.0, 0.0, 0.0)),
+                ('Chest', 'rotation_euler', 22, (0.0, 0.0, 0.0)),
+                ('Chest', 'scale', 22, (1.0, 1.0, 1.0)),
+                ('Shoulder_R', 'rotation_euler', 22, (0.0, 0.0, 0.0)),
+                ('Shoulder_L', 'rotation_euler', 22, (0.0, 0.0, 0.0)),
+                ('Root', 'location', 22, (0.0, 0.0, 0.0)),
             ],
         },
+
+        # ─── Slam: 抬杖蓄力→停顿→快速下砸→命中→回收 ───
+        # Duration: ~1.1s (26 frames at 24fps)
+        # Impact at ~70% = frame 18
+        # Rhythm: slow raise (1-10), brief pause (10-12), fast slam (12-18), recover (18-26)
         'Slam': {
-            'duration': 35,
+            'duration': 26,
             'loop': False,
             'keyframes': [
-                # Arms swing up then down
-                ('Arm_L', 'rotation_euler', 1,  (0.0, 0.5, 0.0)),
-                ('Arm_R', 'rotation_euler', 1,  (0.0, -0.5, 0.0)),
-                ('Arm_L', 'rotation_euler', 15, (0.0, 0.8, 0.0)),
-                ('Arm_R', 'rotation_euler', 15, (0.0, -0.8, 0.0)),
-                ('Arm_L', 'rotation_euler', 25, (0.0, -0.5, 0.0)),
-                ('Arm_R', 'rotation_euler', 25, (0.0, 0.5, 0.0)),
-                ('Arm_L', 'rotation_euler', 35, (0.0, -0.2, 0.0)),
-                ('Arm_R', 'rotation_euler', 35, (0.0, 0.2, 0.0)),
-                # Body dips
+                # Frame 1: Rest pose
+                ('Arm_R', 'rotation_euler', 1,  (0.0, 0.0, 0.0)),
+                ('Arm_L', 'rotation_euler', 1,  (0.0, 0.0, 0.0)),
+                ('Chest', 'rotation_euler', 1,  (0.0, 0.0, 0.0)),
                 ('Root', 'location', 1,  (0.0, 0.0, 0.0)),
-                ('Root', 'location', 25, (0.0, 0.0, -0.1 * h)),
-                ('Root', 'location', 35, (0.0, 0.0, 0.0)),
-            ],
-        },
-        'Hit': {
-            'duration': 15,
-            'loop': False,
-            'keyframes': [
-                # Backward lean then recover
-                ('Chest', 'rotation_euler', 1,  (0.3, 0.0, 0.0)),
-                ('Head', 'rotation_euler', 1,  (0.4, 0.0, 0.0)),
-                ('Chest', 'rotation_euler', 8,  (0.15, 0.0, 0.0)),
-                ('Head', 'rotation_euler', 8,  (0.2, 0.0, 0.0)),
-                ('Chest', 'rotation_euler', 15, (0.0, 0.0, 0.0)),
-                ('Head', 'rotation_euler', 15, (0.0, 0.0, 0.0)),
-            ],
-        },
-        'Death': {
-            'duration': 80,
-            'loop': False,
-            'keyframes': [
-                # Fall forward and sink
-                ('Root', 'rotation_euler', 1,  (0.0, 0.0, 0.0)),
-                ('Root', 'rotation_euler', 40, (0.6, 0.0, 0.0)),
-                ('Root', 'rotation_euler', 80, (1.2, 0.0, 0.0)),
-                ('Root', 'location', 1,  (0.0, 0.0, 0.0)),
-                ('Root', 'location', 80, (0.0, 0.0, -0.5 * h)),
                 ('Head', 'rotation_euler', 1,  (0.0, 0.0, 0.0)),
-                ('Head', 'rotation_euler', 80, (0.3, 0.0, 0.0)),
-                # Arms drop limp
+
+                # Frame 10 (~0.42s): Staff raised high — slow charge
+                # Both arms raise staff overhead (X rotation = backward pitch)
+                ('Arm_R', 'rotation_euler', 10, (0.8, -0.2, -0.15)),
+                ('Arm_L', 'rotation_euler', 10, (0.6, 0.2, 0.2)),
+                ('Chest', 'rotation_euler', 10, (-0.1, 0.0, 0.0)),
+                ('Root', 'location', 10, (0.0, 0.0, 0.02 * h)),
+                ('Head', 'rotation_euler', 10, (-0.15, 0.0, 0.0)),
+
+                # Frame 12 (~0.50s): Brief pause at top (same as frame 10)
+                ('Arm_R', 'rotation_euler', 12, (0.8, -0.2, -0.15)),
+                ('Arm_L', 'rotation_euler', 12, (0.6, 0.2, 0.2)),
+                ('Chest', 'rotation_euler', 12, (-0.1, 0.0, 0.0)),
+
+                # Frame 18 (~0.75s): SLAM — staff crashes down. Impact frame (~70%)
+                # Fast forward pitch, body dips down
+                ('Arm_R', 'rotation_euler', 18, (-0.9, -0.3, -0.05)),
+                ('Arm_L', 'rotation_euler', 18, (-0.5, 0.3, 0.1)),
+                ('Chest', 'rotation_euler', 18, (0.25, 0.0, 0.0)),
+                ('Root', 'location', 18, (0.0, 0.0, -0.06 * h)),
+                ('Head', 'rotation_euler', 18, (0.2, 0.0, 0.0)),
+
+                # Frame 26 (~1.08s): Recover
+                ('Arm_R', 'rotation_euler', 26, (0.0, 0.0, 0.0)),
+                ('Arm_L', 'rotation_euler', 26, (0.0, 0.0, 0.0)),
+                ('Chest', 'rotation_euler', 26, (0.0, 0.0, 0.0)),
+                ('Root', 'location', 26, (0.0, 0.0, 0.0)),
+                ('Head', 'rotation_euler', 26, (0.0, 0.0, 0.0)),
+            ],
+        },
+
+        # ─── Hit: 轻微后仰→肩膀震动→快速恢复 ───
+        # Duration: ~0.25s (6 frames at 24fps)
+        # Subtle: chest slight backward lean, head small back, shoulder flinch
+        'Hit': {
+            'duration': 6,
+            'loop': False,
+            'keyframes': [
+                # Frame 1: Impact moment — slight backward lean
+                ('Chest', 'rotation_euler', 1, (-0.08, 0.0, 0.0)),
+                ('Head', 'rotation_euler', 1, (-0.12, 0.0, 0.0)),
+                ('Shoulder_R', 'location', 1, (0.0, -0.01 * h, 0.0)),
+                ('Shoulder_L', 'location', 1, (0.0, -0.01 * h, 0.0)),
+
+                # Frame 3: Slight rebound
+                ('Chest', 'rotation_euler', 3, (-0.03, 0.0, 0.0)),
+                ('Head', 'rotation_euler', 3, (-0.04, 0.0, 0.0)),
+
+                # Frame 6: Recover to rest
+                ('Chest', 'rotation_euler', 6, (0.0, 0.0, 0.0)),
+                ('Head', 'rotation_euler', 6, (0.0, 0.0, 0.0)),
+                ('Shoulder_R', 'location', 6, (0.0, 0.0, 0.0)),
+                ('Shoulder_L', 'location', 6, (0.0, 0.0, 0.0)),
+            ],
+        },
+
+        # ─── Death: 失去力量→膝盖/身体下沉→前倾→倒地 ───
+        # Duration: ~3.0s (72 frames at 24fps)
+        # No loop. clampWhenFinished = true
+        'Death': {
+            'duration': 72,
+            'loop': False,
+            'keyframes': [
+                # Frame 1: Standing
+                ('Root', 'rotation_euler', 1,  (0.0, 0.0, 0.0)),
+                ('Root', 'location', 1,  (0.0, 0.0, 0.0)),
+                ('Chest', 'rotation_euler', 1,  (0.0, 0.0, 0.0)),
+                ('Head', 'rotation_euler', 1,  (0.0, 0.0, 0.0)),
                 ('Arm_L', 'rotation_euler', 1,  (0.0, 0.0, 0.0)),
                 ('Arm_R', 'rotation_euler', 1,  (0.0, 0.0, 0.0)),
-                ('Arm_L', 'rotation_euler', 80, (0.0, 0.3, 0.0)),
-                ('Arm_R', 'rotation_euler', 80, (0.0, -0.3, 0.0)),
+
+                # Frame 20 (~0.83s): Power fading — body starts to sink
+                ('Root', 'location', 20, (0.0, 0.0, -0.05 * h)),
+                ('Chest', 'rotation_euler', 20, (0.08, 0.0, 0.0)),
+                ('Head', 'rotation_euler', 20, (-0.1, 0.0, 0.0)),
+                ('Arm_L', 'rotation_euler', 20, (0.1, 0.0, 0.1)),
+                ('Arm_R', 'rotation_euler', 20, (0.1, 0.0, -0.1)),
+
+                # Frame 40 (~1.67s): Knees buckle — body sinks further, leans forward
+                ('Root', 'location', 40, (0.0, 0.0, -0.15 * h)),
+                ('Root', 'rotation_euler', 40, (0.3, 0.0, 0.0)),
+                ('Chest', 'rotation_euler', 40, (0.25, 0.0, 0.0)),
+                ('Head', 'rotation_euler', 40, (0.1, 0.0, 0.0)),
+                ('Arm_L', 'rotation_euler', 40, (0.2, 0.0, 0.2)),
+                ('Arm_R', 'rotation_euler', 40, (0.2, 0.0, -0.2)),
+
+                # Frame 72 (~3.0s): Final collapse — face down on ground
+                ('Root', 'location', 72, (0.0, 0.0, -0.35 * h)),
+                ('Root', 'rotation_euler', 72, (1.1, 0.0, 0.0)),
+                ('Chest', 'rotation_euler', 72, (0.4, 0.0, 0.0)),
+                ('Head', 'rotation_euler', 72, (0.2, 0.0, 0.0)),
+                ('Arm_L', 'rotation_euler', 72, (0.3, 0.0, 0.3)),
+                ('Arm_R', 'rotation_euler', 72, (0.3, 0.0, -0.3)),
             ],
         },
+
+        # ─── PhaseChange: 双臂展开→胸口抬起→后仰→爆发→回收 ───
+        # Duration: ~2.2s (53 frames at 24fps)
+        # Impact at ~50% = frame 26 (mid-point burst)
         'PhaseChange': {
-            'duration': 60,
+            'duration': 53,
             'loop': False,
             'keyframes': [
-                # Arms spread wide
-                ('Arm_L', 'rotation_euler', 1,  (0.0, 0.0, 0.5)),
-                ('Arm_R', 'rotation_euler', 1,  (0.0, 0.0, -0.5)),
-                ('Arm_L', 'rotation_euler', 30, (0.0, 0.0, 1.0)),
-                ('Arm_R', 'rotation_euler', 30, (0.0, 0.0, -1.0)),
-                ('Arm_L', 'rotation_euler', 60, (0.0, 0.0, 0.5)),
-                ('Arm_R', 'rotation_euler', 60, (0.0, 0.0, -0.5)),
-                # Chest puffs
+                # Frame 1: Rest
+                ('Arm_L', 'rotation_euler', 1,  (0.0, 0.0, 0.0)),
+                ('Arm_R', 'rotation_euler', 1,  (0.0, 0.0, 0.0)),
                 ('Chest', 'scale', 1,  (1.0, 1.0, 1.0)),
-                ('Chest', 'scale', 30, (1.05, 1.05, 1.08)),
-                ('Chest', 'scale', 60, (1.0, 1.0, 1.0)),
-                # Slight rise
+                ('Chest', 'rotation_euler', 1,  (0.0, 0.0, 0.0)),
                 ('Root', 'location', 1,  (0.0, 0.0, 0.0)),
-                ('Root', 'location', 30, (0.0, 0.0, 0.05 * h)),
-                ('Root', 'location', 60, (0.0, 0.0, 0.0)),
+                ('Head', 'rotation_euler', 1,  (0.0, 0.0, 0.0)),
+
+                # Frame 26 (~1.08s): Arms spread wide, chest puffed, slight back lean
+                # This is the mid-point burst moment (~50%)
+                ('Arm_L', 'rotation_euler', 26, (0.0, 0.0, 0.9)),
+                ('Arm_R', 'rotation_euler', 26, (0.0, 0.0, -0.9)),
+                ('Chest', 'scale', 26, (1.05, 1.05, 1.08)),
+                ('Chest', 'rotation_euler', 26, (-0.08, 0.0, 0.0)),
+                ('Root', 'location', 26, (0.0, 0.0, 0.04 * h)),
+                ('Head', 'rotation_euler', 26, (-0.1, 0.0, 0.0)),
+
+                # Frame 53 (~2.2s): Recover — arms come back, ready for phase 2
+                ('Arm_L', 'rotation_euler', 53, (0.0, 0.0, 0.2)),
+                ('Arm_R', 'rotation_euler', 53, (0.0, 0.0, -0.2)),
+                ('Chest', 'scale', 53, (1.02, 1.02, 1.03)),
+                ('Chest', 'rotation_euler', 53, (0.0, 0.0, 0.0)),
+                ('Root', 'location', 53, (0.0, 0.0, 0.0)),
+                ('Head', 'rotation_euler', 53, (0.0, 0.0, 0.0)),
             ],
         },
     }
@@ -602,9 +721,17 @@ def create_animations(armature, dims):
         action = bpy.data.actions.new(name=anim_name)
         action.use_cyclic = config['loop']
 
+        # CRITICAL: Assign the action to the armature BEFORE inserting keyframes.
+        # keyframe_insert() writes to the currently active action.
+        if armature.animation_data is None:
+            armature.animation_data_create()
+        armature.animation_data.action = action
+
         # Enter pose mode, reset to rest
         bpy.ops.object.mode_set(mode='POSE')
         for bone in armature.pose.bones:
+            # Force XYZ Euler rotation mode for all bones (prevents "Multiple rotation mode" warnings)
+            bone.rotation_mode = 'XYZ'
             bone.location = (0, 0, 0)
             bone.rotation_euler = (0, 0, 0)
             bone.scale = (1, 1, 1)
@@ -621,11 +748,6 @@ def create_animations(armature, dims):
             bone.keyframe_insert(data_path=attr, frame=frame)
 
         bpy.ops.object.mode_set(mode='OBJECT')
-
-        # Assign action to armature's animation data temporarily
-        if armature.animation_data is None:
-            armature.animation_data_create()
-        armature.animation_data.action = action
 
         # Create NLA track and strip so the action is exported by glTF ACTIONS mode
         track = armature.animation_data.nla_tracks.new()
@@ -650,6 +772,7 @@ def create_animations(armature, dims):
     # Set the armature to rest position
     bpy.ops.object.mode_set(mode='POSE')
     for bone in armature.pose.bones:
+        bone.rotation_mode = 'XYZ'
         bone.location = (0, 0, 0)
         bone.rotation_euler = (0, 0, 0)
         bone.scale = (1, 1, 1)

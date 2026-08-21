@@ -45,6 +45,7 @@ export class BossBattleController {
     this.phase2Triggered = false;
     this.onComplete = null; // (win) => void
     this.onExit = null; // () => void
+    this.onShake = null; // (power) => void — camera shake callback
 
     // 临时光源（Boss 模式暗色环境）
     this._bossLight = null;
@@ -64,6 +65,9 @@ export class BossBattleController {
 
     if (!this.ai) {
       this.ai = new WardenAI(this.boss, this.combat, this.scene, this.effects, this.explosion);
+      this.ai.audio = this.audio;
+      this.ai.hud = this.hud;
+      this.ai.onShake = (power) => this.onShake?.(power);
     }
     this.ai.reset();
 
@@ -243,13 +247,14 @@ export class BossBattleController {
   }
 
   _showPhaseChangeEffect() {
-    // 强烈红光 + 爆炸 + 震屏
+    // Initial red flash on phase change start (mid-point burst handled by WardenAI)
     this.explosion.playMagicExplosion(
       this.boss.headPosition,
-      2.0
+      1.5
     );
-    this.audio.playExplosion(2.0, 8);
+    this.audio.playExplosion(1.5, 8);
     this.hud.screenFlash();
+    if (this.onShake) this.onShake(1.0);
   }
 
   _onBossDeath() {

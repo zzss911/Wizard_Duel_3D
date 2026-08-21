@@ -23,6 +23,17 @@ const ANIM_PRIORITY = {
   Idle: 10,
 };
 
+// Impact time as fraction of clip duration (0.0 ~ 1.0)
+// This is the moment the skill's visual effect should fire
+const ANIM_IMPACT_TIME = {
+  Cast: 0.60,       // Magic Bolt / Chain: fire at 60% when staff thrusts forward
+  Slam: 0.70,       // Quake: ground impact at 70% when staff hits floor
+  PhaseChange: 0.50, // Mid-point burst at 50%
+  Hit: 0.50,
+  Death: 0.50,
+  Idle: 0,
+};
+
 // State → animation mapping
 const STATE_ANIM_MAP = {
   IDLE: 'Idle',
@@ -116,6 +127,7 @@ export class WardenBoss {
     this._oneShotActive = false; // true while a one-shot anim is playing
     this._oneShotName = null; // name of the currently playing one-shot
     this._oneShotPriority = 0; // priority of current one-shot
+    this._oneShotFired = false; // whether impact callback has fired for current one-shot
 
     // Model loading state
     this._modelLoaded = false;
@@ -265,6 +277,11 @@ export class WardenBoss {
       const finishedName = this._actionToName(finishedAction);
       if (!finishedName) return;
 
+      // CRITICAL: Only clear one-shot state if this is the CURRENT one-shot.
+      // An old Hit/Cast that was interrupted by a higher-priority anim (Death,
+      // PhaseChange, Slam) may still fire its finished event — ignore it.
+      if (finishedName !== this._oneShotName) return;
+
       // Clear one-shot state
       this._oneShotActive = false;
       this._oneShotName = null;
@@ -394,6 +411,43 @@ export class WardenBoss {
     this._oneShotActive = true;
     this._oneShotName = animName;
     this._oneShotPriority = myPriority;
+    this._oneShotFired = false; // reset impact flag for new one-shot
+  }
+
+  /**
+   * Returns the name of the currently active one-shot animation, or null.
+   */
+  getOneShotName() {
+    return this._oneShotActive ? this._oneShotName : null;
+  }
+
+  /**
+   * Returns the progress (0~1) of the current one-shot animation.
+   * Returns 0 if no one-shot is active.
+   */
+  getOneShotProgress() {
+    if (!this._oneShotActive || !this._currentAction) return 0;
+    const clip = this._currentAction.getClip();
+    if (!clip || clip.duration <= 0) return 0;
+    return Math.min(1, this._currentAction.time / clip.duration);
+  }
+
+  /**
+   * Check if the current one-shot has reached its impact time.
+   * Returns true once, then false until a new one-shot starts.
+   * Used by WardenAI to sync skill effects to animation frames.
+   */
+  consumeImpact() {
+    if (!this._oneShotActive || !this._oneShotName) return false;
+    if (this._oneShotFired) return false;
+    const impactTime = ANIM_IMPACT_TIME[this._oneShotName];
+    if (impactTime === undefined) return false;
+    const progress = this.getOneShotProgress();
+    if (progress >= impactTime) {
+      this._oneShotFired = true;
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -734,9 +788,13 @@ export class WardenBoss {
     if (this.dead || this._invulnT > 0) return;
     this.hp = Math.max(0, this.hp - amount);
     this._flash = 0.15;
-    // Trigger Hit one-shot (cannot interrupt Death/PhaseChange due to priority)
+    // Trigger Hit one-shot only if no higher-priority one-shot is active.
+    // If Cast/Slam/PhaseChange/Death is playing, just do material flash + particles.
     if (this._hasAnims && this._currentAnimName !== 'Death') {
-      this.playOneShot('Hit', 0.1);
+      const hitPriority = ANIM_PRIORITY['Hit'];
+      if (!this._oneShotActive || hitPriority >= this._oneShotPriority) {
+        this.playOneShot('Hit', 0.1);
+      }
     }
     if (this.hp <= 0) {
       this.dead = true;
@@ -823,6 +881,7 @@ export class WardenBoss {
       this._oneShotActive = false;
       this._oneShotName = null;
       this._oneShotPriority = 0;
+      this._oneShotFired = false;
       this._bossState = 'IDLE';
       this._playAnimInternal('Idle', 0.1, true);
     }
