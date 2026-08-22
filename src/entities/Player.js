@@ -158,7 +158,6 @@ export class Player {
       this._glbLoaded = true;
       this._usingFallback = false;
       this._modelData = null;
-      console.log('[Player] GLB model loaded successfully');
     } catch (e) {
       console.warn('[Player] Failed to apply GLB, keeping programmatic model:', e);
     }
