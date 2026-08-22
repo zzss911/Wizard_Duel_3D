@@ -16,6 +16,13 @@ export class MagicAudio {
     this.ctx = null;
     this.master = null;
     this._noiseBuffer = null;
+    this._bgmGeneration = 0;
+    this._bgmTimers = new Set();
+    this._bgmType = null;
+    this._bgmGain = null;
+    this._bgmNodes = null;
+    this._volume = 0.6;
+    this._enabled = true;
   }
 
   /** 必须在用户手势中调用一次 */
@@ -73,7 +80,7 @@ export class MagicAudio {
   setEnabled(on) {
     this._enabled = on;
     if (this.master) {
-      this.master.gain.value = on ? 0.9 * (this._volume || 0.6) : 0;
+      this.master.gain.value = on ? 0.9 * (this._volume ?? 0.6) : 0;
     }
   }
 
@@ -203,21 +210,11 @@ export class MagicAudio {
 
   /* ==================== 程序化 BGM / Ambient ==================== */
 
-  /** 停止当前 BGM */
+  /** 停止当前 BGM，清理所有节点和 timer */
   stopMusic() {
-    if (this._bgmNodes) {
-      for (const n of this._bgmNodes) {
-        try { n.stop?.(); } catch(e) {}
-        try { n.disconnect?.(); } catch(e) {}
-      }
-      this._bgmNodes = null;
-    }
-    if (this._bgmGain) {
-      this._bgmGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.3);
-      const oldGain = this._bgmGain;
-      setTimeout(() => { try { oldGain.disconnect(); } catch(e){} }, 800);
-      this._bgmGain = null;
-    }
+    this._bgmGeneration++;
+    this._clearBgmTimers();
+    this._stopBgmInternal();
     this._bgmType = null;
   }
 
@@ -235,9 +232,33 @@ export class MagicAudio {
     }
   }
 
-  _startBgm(type) {
+  _clearBgmTimers() {
+    if (this._bgmTimers) {
+      for (const id of this._bgmTimers) clearTimeout(id);
+      this._bgmTimers.clear();
+    }
+  }
+
+  _addBgmTimer(id) {
+    if (!this._bgmTimers) this._bgmTimers = new Set();
+    this._bgmTimers.add(id);
+  }
+
+  _removeBgmTimer(id) {
+    if (this._bgmTimers) this._bgmTimers.delete(id);
+  }
+
+  /**
+   * 启动 BGM。forceRestart=true 时即使同 type 也重新创建。
+   * fadeOut 后 _bgmType 保持不变但 gain 已归零，
+   * 需要传入 forceRestart 或调用 restartMusic()。
+   */
+  _startBgm(type, { forceRestart = false } = {}) {
     if (!this.ctx || this.ctx.state !== 'running') return;
-    if (this._bgmType === type) return;
+    if (this._bgmType === type && !forceRestart) return;
+
+    const gen = ++this._bgmGeneration;
+    this._clearBgmTimers();
     this._stopBgmInternal();
 
     const t0 = this.ctx.currentTime;
@@ -248,6 +269,7 @@ export class MagicAudio {
     this._bgmGain = gain;
     this._bgmNodes = [];
     this._bgmType = type;
+    this._bgmGeneration = gen;
 
     if (type === 'menu') {
       this._createPad(gain, [
@@ -262,14 +284,14 @@ export class MagicAudio {
         [98, 'sine', 0.3],
         [130.8, 'triangle', 0.15],
       ], 3.0, 0.07);
-      this._createPulse(gain, 65.4, 0.5);
+      this._createPulse(gain, 65.4, 0.5, gen);
     } else if (type === 'boss') {
       this._createPad(gain, [
         [36.7, 'sine', 0.6],
         [55, 'sine', 0.35],
         [73.4, 'sawtooth', 0.1],
       ], 5.0, 0.1);
-      this._createPulse(gain, 36.7, 0.7);
+      this._createPulse(gain, 36.7, 0.7, gen);
       this._createNoiseWind(gain, 0.025);
     }
   }
@@ -301,9 +323,10 @@ export class MagicAudio {
     }
   }
 
-  /** 创建低频脉冲 */
-  _createPulse(dst, freq, interval) {
+  /** 创建低频脉冲（generation 防泄漏） */
+  _createPulse(dst, freq, interval, gen) {
     const pulse = () => {
+      if (gen !== this._bgmGeneration) return;
       if (!this._bgmNodes) return;
       const t = this.ctx.currentTime;
       const osc = this.ctx.createOscillator();
@@ -318,9 +341,14 @@ export class MagicAudio {
       osc.start(t);
       osc.stop(t + interval);
       this._bgmNodes.push(osc);
-      setTimeout(pulse, interval * 1000);
+
+      if (gen === this._bgmGeneration) {
+        const id = setTimeout(pulse, interval * 1000);
+        this._addBgmTimer(id);
+      }
     };
-    setTimeout(pulse, 500);
+    const id = setTimeout(pulse, 500);
+    this._addBgmTimer(id);
   }
 
   /** 创建噪声风声 */
@@ -347,9 +375,9 @@ export class MagicAudio {
     this._bgmNodes.push(src, lfo);
   }
 
-  playMenuAmbience() { this._startBgm('menu'); }
-  playDuelAmbience() { this._startBgm('duel'); }
-  playBossAmbience() { this._startBgm('boss'); }
+  playMenuAmbience() { this._startBgm('menu', { forceRestart: true }); }
+  playDuelAmbience() { this._startBgm('duel', { forceRestart: true }); }
+  playBossAmbience() { this._startBgm('boss', { forceRestart: true }); }
 
   /** Boss Phase 2: 更低沉、更压迫 */
   setBossPhase(phase) {
@@ -369,7 +397,7 @@ export class MagicAudio {
     }
   }
 
-  /** Boss 死亡后音乐快速衰减 */
+  /** BGM 衰减到 0，但不清除 type（用于 endGame / bossDeath） */
   fadeOutMusic(duration = 1.5) {
     if (this._bgmGain) {
       this._bgmGain.gain.setTargetAtTime(0, this.ctx.currentTime, duration / 3);

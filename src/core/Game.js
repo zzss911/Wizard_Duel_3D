@@ -109,7 +109,13 @@ export class Game {
     }
 
     // 首次用户交互后解锁 AudioContext
-    const unlockAudio = () => this.audio.unlock();
+    const unlockAudio = () => {
+      this.audio.unlock();
+      // 首次解锁后，如果仍在主菜单/选择页，开始播放菜单氛围
+      if (this.phase === GAME_PHASE.MAIN_MENU || this.phase === GAME_PHASE.BOSS_SELECT) {
+        this.audio.playMenuAmbience();
+      }
+    };
     window.addEventListener('pointerdown', unlockAudio, { once: true });
     window.addEventListener('touchstart', unlockAudio, { once: true });
     window.addEventListener('keydown', unlockAudio, { once: true });
@@ -274,21 +280,18 @@ export class Game {
       if (this.composer) { this.composer.enabled = false; }
       this.renderer.shadowMap.enabled = false;
       this._particleScale = 0.4;
-      this._lightScale = 0;
     } else if (quality === 'medium') {
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
       if (this.composer) { this.composer.enabled = true; }
       if (this.bloomPass) { this.bloomPass.strength = 0.35; }
       this.renderer.shadowMap.enabled = true;
       this._particleScale = 0.7;
-      this._lightScale = 0.5;
     } else {
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
       if (this.composer) { this.composer.enabled = true; }
       if (this.bloomPass) { this.bloomPass.strength = 0.55; }
       this.renderer.shadowMap.enabled = true;
       this._particleScale = 1.0;
-      this._lightScale = 1.0;
     }
     // Apply particle scale to Effects
     if (this.effects && this.effects.setParticleScale) {
@@ -475,6 +478,15 @@ export class Game {
     this.renderer.setAnimationLoop(() => this.tick());
   }
 
+  /** 统一渲染入口：Low quality 时直出，不运行 composer */
+  _renderScene() {
+    if (this.composer && this.composer.enabled !== false) {
+      this.composer.render();
+    } else {
+      this.renderer.render(this.scene, this.camera);
+    }
+  }
+
   tick() {
     if (this.paused) return;
     const dt = Math.min(this.clock.getDelta(), 0.05);
@@ -499,8 +511,7 @@ export class Game {
       this.props.update(dt);
       this.effects.update(dt);
       this.updateMenuCamera(dt);
-      if (this.composer && this.composer.enabled !== false) this.composer.render();
-      else this.renderer.render(this.scene, this.camera);
+      this._renderScene();
       this._updateDebug(dt);
       return;
     }
@@ -512,8 +523,7 @@ export class Game {
       this.props.update(dt);
       this.effects.update(dt);
       this.updateMenuCamera(dt);
-      if (this.composer && this.composer.enabled !== false) this.composer.render();
-      else this.renderer.render(this.scene, this.camera);
+      this._renderScene();
       this._updateDebug(dt);
       return;
     }
@@ -622,8 +632,7 @@ export class Game {
     // ---- HUD ----
     this.hud.update(this.player, this.target, this.enemy);
 
-    if (this.composer) this.composer.render();
-    else this.renderer.render(this.scene, this.camera);
+    this._renderScene();
     this._updateDebug(dt);
   }
 
@@ -787,8 +796,7 @@ export class Game {
     // HUD：只显示玩家血条和技能冷却
     this.hud.update(this.player, this.player, null);
 
-    if (this.composer) this.composer.render();
-    else this.renderer.render(this.scene, this.camera);
+    this._renderScene();
   }
 
   addShake(power = 1) {
@@ -952,6 +960,7 @@ export class Game {
 
     this.input.setGameplayEnabled(false);
     this.enemyAI.setDifficulty(this.difficulty);
+    this.audio.playDuelAmbience();
   }
 
   onResize() {
