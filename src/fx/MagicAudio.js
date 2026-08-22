@@ -18,6 +18,7 @@ export class MagicAudio {
     this._noiseBuffer = null;
     this._bgmGeneration = 0;
     this._bgmTimers = new Set();
+    this._bgmTransientNodes = new Set();
     this._bgmType = null;
     this._bgmGain = null;
     this._bgmNodes = null;
@@ -214,6 +215,7 @@ export class MagicAudio {
   stopMusic() {
     this._bgmGeneration++;
     this._clearBgmTimers();
+    this._clearBgmTransients();
     this._stopBgmInternal();
     this._bgmType = null;
   }
@@ -226,9 +228,20 @@ export class MagicAudio {
       }
       this._bgmNodes = null;
     }
+    this._clearBgmTransients();
     if (this._bgmGain) {
       try { this._bgmGain.disconnect(); } catch(e) {}
       this._bgmGain = null;
+    }
+  }
+
+  _clearBgmTransients() {
+    if (this._bgmTransientNodes) {
+      for (const n of this._bgmTransientNodes) {
+        try { n.stop?.(); } catch(e) {}
+        try { n.disconnect?.(); } catch(e) {}
+      }
+      this._bgmTransientNodes.clear();
     }
   }
 
@@ -323,11 +336,19 @@ export class MagicAudio {
     }
   }
 
-  /** 创建低频脉冲（generation 防泄漏） */
+  /** 创建低频脉冲（generation 防泄漏 + transient node 自清理） */
   _createPulse(dst, freq, interval, gen) {
+    const scheduleNext = (delay) => {
+      const id = setTimeout(() => {
+        this._removeBgmTimer(id);
+        pulse();
+      }, delay);
+      this._addBgmTimer(id);
+    };
+
     const pulse = () => {
       if (gen !== this._bgmGeneration) return;
-      if (!this._bgmNodes) return;
+      if (!this._bgmGain) return;
       const t = this.ctx.currentTime;
       const osc = this.ctx.createOscillator();
       osc.type = 'sine';
@@ -340,15 +361,19 @@ export class MagicAudio {
       osc.connect(g).connect(dst);
       osc.start(t);
       osc.stop(t + interval);
-      this._bgmNodes.push(osc);
+
+      // transient node: self-cleans on ended, not stored in _bgmNodes
+      this._bgmTransientNodes.add(osc);
+      osc.onended = () => {
+        this._bgmTransientNodes.delete(osc);
+        try { osc.disconnect(); } catch(e) {}
+      };
 
       if (gen === this._bgmGeneration) {
-        const id = setTimeout(pulse, interval * 1000);
-        this._addBgmTimer(id);
+        scheduleNext(interval * 1000);
       }
     };
-    const id = setTimeout(pulse, 500);
-    this._addBgmTimer(id);
+    scheduleNext(500);
   }
 
   /** 创建噪声风声 */
