@@ -574,7 +574,7 @@ export class Game {
       this._aimDir.set(-Math.sin(this.cameraYaw) * cp, -sp * 0.6, -Math.cos(this.cameraYaw) * cp).normalize();
       if (this.combat.canFire(this.player)) {
         const dir = this._aimDir.clone();
-        this.player.requestCast(() => {
+        this.player.requestCast('basic', () => {
           if (this.combat.commitFire(this.player, dir)) {
             this.audio.playCast(2);
           }
@@ -594,7 +594,7 @@ export class Game {
       this._aimDir.set(-Math.sin(this.cameraYaw) * cp2, -sp2 * 0.6, -Math.cos(this.cameraYaw) * cp2).normalize();
       if (this.combat.canCastSkill(this.player, 1)) {
         const dir = this._aimDir.clone();
-        this.player.requestCast(() => {
+        this.player.requestCast('q', () => {
           if (this.combat.commitCastSkill(this.player, 1, dir)) {
             this.audio.playCast(4);
           }
@@ -607,7 +607,7 @@ export class Game {
       this._aimDir.set(-Math.sin(this.cameraYaw) * cp3, -sp3 * 0.6, -Math.cos(this.cameraYaw) * cp3).normalize();
       if (this.combat.canCastSkill(this.player, 2)) {
         const dir = this._aimDir.clone();
-        this.player.requestCast(() => {
+        this.player.requestCast('e', () => {
           if (this.combat.commitCastSkill(this.player, 2, dir)) {
             this.audio.playCast(3);
           }
@@ -740,7 +740,7 @@ export class Game {
         this._aimDir.set(-Math.sin(this.cameraYaw) * cp, -sp * 0.6, -Math.cos(this.cameraYaw) * cp).normalize();
         if (this.combat.canFire(this.player)) {
           const dir = this._aimDir.clone();
-          this.player.requestCast(() => {
+          this.player.requestCast('basic', () => {
             if (this.combat.commitFire(this.player, dir)) {
               this.audio.playCast(2);
             }
@@ -762,7 +762,7 @@ export class Game {
         this._aimDir.set(-Math.sin(this.cameraYaw) * cp2, -sp2 * 0.6, -Math.cos(this.cameraYaw) * cp2).normalize();
         if (this.combat.canCastSkill(this.player, 1)) {
           const dir = this._aimDir.clone();
-          this.player.requestCast(() => {
+          this.player.requestCast('q', () => {
             if (this.combat.commitCastSkill(this.player, 1, dir)) {
               this.audio.playCast(4);
             }
@@ -776,7 +776,7 @@ export class Game {
         this._aimDir.set(-Math.sin(this.cameraYaw) * cp3, -sp3 * 0.6, -Math.cos(this.cameraYaw) * cp3).normalize();
         if (this.combat.canCastSkill(this.player, 2)) {
           const dir = this._aimDir.clone();
-          this.player.requestCast(() => {
+          this.player.requestCast('e', () => {
             if (this.combat.commitCastSkill(this.player, 2, dir)) {
               this.audio.playCast(3);
             }

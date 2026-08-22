@@ -204,7 +204,9 @@ function _buildAnimationClips() {
   return {
     Idle: _clipIdle(),
     Run: _clipRun(),
-    Cast: _clipCast(),
+    CastBasic: _clipCastBasic(),
+    CastQ: _clipCastQ(),
+    CastE: _clipCastE(),
     Dodge: _clipDodge(),
     Hit: _clipHit(),
     Death: _clipDeath(),
@@ -297,40 +299,142 @@ function _clipRun() {
   return new THREE.AnimationClip('Run', 1, tracks);
 }
 
-function _clipCast() {
-  const times = [0, 0.15, 0.3, 0.5];
+function _clipCastBasic() {
+  // Fast wand flick, 0.5s, impact@50%
+  const times = [0, 0.1, 0.25, 0.4, 0.5];
   const tracks = [];
   tracks.push(_R('shoulderR', times, [
-    0, 0, -0.4, 0.9165,
-    0, 0, -0.6, 0.8000,
-    0, 0, -0.8, 0.6000,
-    0, 0, -0.5, 0.8660,
-  ]));
-  tracks.push(_R('armR', times, [
     0, 0, -0.3, 0.9539,
     0, 0, -0.5, 0.8660,
     0, 0, -0.7, 0.7141,
     0, 0, -0.4, 0.9165,
+    0, 0, -0.2, 0.9798,
+  ]));
+  tracks.push(_R('armR', times, [
+    0, 0, -0.2, 0.9800,
+    0, 0, -0.4, 0.9165,
+    0, 0, -0.6, 0.8000,
+    0, 0, -0.3, 0.9539,
+    0, 0, -0.1, 0.9950,
+  ]));
+  tracks.push(_R('forearmR', times, [
+    0, 0, 0, 1,
+    -0.2, 0, 0, 0.9800,
+    -0.4, 0, 0, 0.9165,
+    -0.15, 0, 0, 0.9800,
+    0, 0, 0, 1,
+  ]));
+  tracks.push(_R('chest', times, [
+    0, 0.03, 0, 0.9996,
+    0, 0.06, 0, 0.9982,
+    0, 0.1, 0, 0.9950,
+    0, 0.05, 0, 0.9988,
+    0, 0.02, 0, 0.9998,
+  ]));
+  return new THREE.AnimationClip('CastBasic', 0.5, tracks);
+}
+
+function _clipCastQ() {
+  // Powerful burst, 0.9s, impact@64%
+  const times = [0, 0.2, 0.4, 0.58, 0.75, 0.9];
+  const tracks = [];
+  // Wind-up: arm pulls back/side
+  tracks.push(_R('shoulderR', times, [
+    0, 0, -0.2, 0.9800,
+    0, 0.3, 0, 0.9539,
+    0, 0.4, 0, 0.9165,
+    0, 0, -0.6, 0.8000,
+    0, 0, -0.4, 0.9165,
+    0, 0, -0.2, 0.9800,
+  ]));
+  tracks.push(_R('armR', times, [
+    0, 0, -0.2, 0.9800,
+    0, 0.2, -0.3, 0.9165,
+    0, 0.3, -0.4, 0.8660,
+    0, 0, -0.7, 0.7141,
+    0, 0, -0.4, 0.9165,
+    0, 0, -0.1, 0.9950,
   ]));
   tracks.push(_R('forearmR', times, [
     0, 0, 0, 1,
     -0.3, 0, 0, 0.9539,
     -0.5, 0, 0, 0.8660,
-    -0.2, 0, 0, 0.9800,
+    -0.6, 0, 0, 0.8000,
+    -0.3, 0, 0, 0.9539,
+    0, 0, 0, 1,
   ]));
   tracks.push(_R('armL', times, [
-    0, 0, 0.2, 0.9800,
+    0, 0, 0.1, 0.9950,
+    0, 0, 0.25, 0.9682,
+    0, 0, 0.35, 0.9380,
+    0, 0, 0.45, 0.8923,
     0, 0, 0.3, 0.9539,
-    0, 0, 0.4, 0.9165,
-    0, 0, 0.3, 0.9539,
+    0, 0, 0.1, 0.9950,
   ]));
   tracks.push(_R('chest', times, [
-    0, 0.05, 0, 0.9988,
-    0, 0.1, 0, 0.9950,
+    0, 0, 0, 1,
+    0, -0.05, 0, 0.9988,
+    0, -0.08, 0, 0.9968,
     0, 0.15, 0, 0.9888,
     0, 0.08, 0, 0.9968,
+    0, 0.02, 0, 0.9998,
   ]));
-  return new THREE.AnimationClip('Cast', 0.5, tracks);
+  tracks.push(_R('spine', times, [
+    0, 0, 0, 1,
+    -0.04, 0, 0, 0.9992,
+    -0.06, 0, 0, 0.9982,
+    0.06, 0, 0, 0.9982,
+    0.02, 0, 0, 0.9998,
+    0, 0, 0, 1,
+  ]));
+  return new THREE.AnimationClip('CastQ', 0.9, tracks);
+}
+
+function _clipCastE() {
+  // Controlled point release, 0.7s, impact@55%
+  const times = [0, 0.15, 0.28, 0.39, 0.55, 0.7];
+  const tracks = [];
+  tracks.push(_R('shoulderR', times, [
+    0, 0, -0.2, 0.9800,
+    0, 0, -0.35, 0.9363,
+    0, 0, -0.4, 0.9165,
+    0, 0, -0.5, 0.8660,
+    0, 0, -0.3, 0.9539,
+    0, 0, -0.15, 0.9888,
+  ]));
+  tracks.push(_R('armR', times, [
+    0, 0, -0.15, 0.9888,
+    0, 0, -0.3, 0.9539,
+    0, 0, -0.35, 0.9363,
+    0, 0, -0.45, 0.8923,
+    0, 0, -0.25, 0.9682,
+    0, 0, -0.1, 0.9950,
+  ]));
+  tracks.push(_R('forearmR', times, [
+    0, 0, 0, 1,
+    -0.15, 0, 0, 0.9888,
+    -0.2, 0, 0, 0.9800,
+    -0.3, 0, 0, 0.9539,
+    -0.15, 0, 0, 0.9888,
+    0, 0, 0, 1,
+  ]));
+  tracks.push(_R('chest', times, [
+    0, 0.03, 0, 0.9996,
+    0, 0.06, 0, 0.9982,
+    0, 0.08, 0, 0.9968,
+    0, 0.1, 0, 0.9950,
+    0, 0.05, 0, 0.9988,
+    0, 0.02, 0, 0.9998,
+  ]));
+  tracks.push(_R('head', times, [
+    0, 0.02, 0, 0.9998,
+    0, 0.04, 0, 0.9992,
+    0, 0.05, 0, 0.9988,
+    0, 0.04, 0, 0.9992,
+    0, 0.02, 0, 0.9998,
+    0, 0, 0, 1,
+  ]));
+  return new THREE.AnimationClip('CastE', 0.7, tracks);
 }
 
 function _clipDodge() {

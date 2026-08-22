@@ -25,6 +25,7 @@ async function _loadPlayerGLB() {
 /**
  * Player —— 玩家角色（魔法决斗师）
  *
+ * v0.3.0: Cast split into CastBasic/CastQ/CastE with token-based pending management.
  * v0.2.0-GLB：正式接入腾讯混元 3D 生成的 GLB 模型。
  * 加载优先级：1. player_rigged.glb  2. 程序化 PlayerModel  3. 旧 WizardModel
  */
@@ -68,8 +69,12 @@ export class Player {
     this._isMoving = false;
     this._prevDodgeT = 0;
 
-    // ---- Cast impact sync ----
-    this._pendingCast = null;
+    // ---- Cast impact sync (v0.3.0) ----
+    this._castGeneration = 0;
+    this._pendingCast = null; // { type, callback, token, fired }
+
+    // ---- Cast anchor bone reference ----
+    this._castBoneAnchor = null; // THREE.Object3D attached to Hand_R bone
 
     this._buildMesh();
 
@@ -130,8 +135,8 @@ export class Player {
         clipsMap[name] = clip;
       }
 
-      // Check if we have all required animations
-      const required = ['Idle', 'Run', 'Cast', 'Dodge', 'Hit', 'Death'];
+      // Check required animations (v0.3.0: CastBasic/CastQ/CastE or fallback Cast)
+      const required = ['Idle', 'Run', 'Dodge', 'Hit', 'Death'];
       const hasAll = required.every(r => clipsMap[r]);
       if (!hasAll) {
         console.warn('[Player] GLB missing animations:', required.filter(r => !clipsMap[r]));
@@ -150,16 +155,49 @@ export class Player {
       // Collect flash materials from GLB
       this._flashMaterials = this._collectFlashMaterials(model);
 
-      // Effect anchors — approximate positions
-      this.castAnchor.position.set(0, 1.4, 0.3);
-      this.chestAnchor.position.set(0, 1.1, 0);
-      this.headAnchor.position.set(0, 1.6, 0);
+      // ---- v0.3.0: Attach castAnchor to Hand_R bone ----
+      this._attachCastAnchorToSkeleton(model, skeleton);
 
       this._glbLoaded = true;
       this._usingFallback = false;
       this._modelData = null;
     } catch (e) {
       console.warn('[Player] Failed to apply GLB, keeping programmatic model:', e);
+    }
+  }
+
+  _attachCastAnchorToSkeleton(model, skeleton) {
+    // Find Hand_R bone in the skeleton
+    if (!skeleton) return;
+
+    const boneNames = skeleton.bones.map(b => b.name);
+    const handRName = boneNames.find(n => n === 'Hand_R' || n === 'hand_R' || n === 'handR');
+    if (!handRName) {
+      console.warn('[Player] Hand_R bone not found in skeleton, using fixed castAnchor');
+      return;
+    }
+
+    const handRBone = skeleton.getBoneByName(handRName);
+    if (!handRBone) return;
+
+    // Create or reuse castAnchor as child of Hand_R bone
+    // Remove from current parent first
+    if (this.castAnchor.parent) {
+      this.castAnchor.parent.remove(this.castAnchor);
+    }
+
+    // Set local offset to approximate wand/staff tip position relative to hand
+    // The wand extends forward/up from the hand; offset is tuned to wand tip
+    this.castAnchor.position.set(0, 0.35, 0.08);
+    this.castAnchor.rotation.set(0, 0, 0);
+
+    // Add as child of the Hand_R bone so it follows all arm animation
+    handRBone.add(this.castAnchor);
+    this._castBoneAnchor = handRBone;
+
+    // Also move chest/head anchors if they were on group
+    if (this.chestAnchor.parent === this.group) {
+      // Keep them on group with fixed offsets — they don't need bone precision
     }
   }
 
@@ -188,6 +226,15 @@ export class Player {
       this.animController = new PlayerAnimationController(
         model.bones.hips, model.skeleton, model.clips, false
       );
+
+      // For programmatic model, attach castAnchor to handR bone
+      if (model.bones && model.bones.handR) {
+        // Remove castAnchor from group, add to handR bone
+        this.group.remove(this.castAnchor);
+        this.castAnchor.position.set(0, 0.3, 0.02);
+        model.bones.handR.add(this.castAnchor);
+        this._castBoneAnchor = model.bones.handR;
+      }
 
       this._usingFallback = false;
     } catch (e) {
@@ -235,8 +282,16 @@ export class Player {
     return new THREE.Vector3(this.position.x, this.position.y + 1.4, this.position.z);
   }
 
-  /** 施法原点 */
+  /**
+   * 施法原点 — v0.3.0: Use castAnchor world position if bone-attached.
+   * Falls back to fixed offset if GLB not loaded or anchor on group.
+   */
   getCastOrigin(out) {
+    if (this._castBoneAnchor && this.castAnchor.parent === this._castBoneAnchor) {
+      this.castAnchor.getWorldPosition(out);
+      return out;
+    }
+    // Fallback: fixed offset
     return out.set(
       this.position.x + Math.sin(this._facing) * 0.7,
       this.position.y + 1.5,
@@ -245,17 +300,64 @@ export class Player {
   }
 
   /**
-   * 施法请求 — 播放 Cast 动画，projectile 在 55% 时由 consumeImpact 触发。
-   * 如果没有动画系统（fallback），则立即触发 callback。
-   * @param {function} impactCallback - 在 impact frame 调用
+   * 施法请求 — v0.3.0: Type-aware cast with token-based pending management.
+   *
+   * @param {string} castType - 'basic' | 'q' | 'e'
+   * @param {function} impactCallback - called at impact frame
    */
-  requestCast(impactCallback) {
+  requestCast(castType, impactCallback) {
     this._castGlow = 1;
+
+    // Cancel any existing pending cast (new cast supersedes old)
+    if (this._pendingCast && !this._pendingCast.fired) {
+      this._pendingCast.fired = true;
+    }
+
+    const token = ++this._castGeneration;
+    this._pendingCast = {
+      type: castType,
+      callback: impactCallback,
+      token: token,
+      fired: false,
+    };
+
     if (this.animController && !this._usingFallback) {
-      this.animController.playOneShot('Cast', impactCallback, 0.1);
+      // Map cast type to animation name
+      const animName = castType === 'basic' ? 'CastBasic'
+        : castType === 'q' ? 'CastQ'
+        : castType === 'e' ? 'CastE'
+        : 'CastBasic';
+
+      // Wrap callback with token check to prevent stale execution
+      const wrappedCallback = () => {
+        if (token !== this._castGeneration) return; // Stale
+        if (this._pendingCast && this._pendingCast.fired) return; // Already fired
+        if (this._pendingCast) this._pendingCast.fired = true;
+        impactCallback();
+      };
+
+      const returnedToken = this.animController.playOneShot(animName, wrappedCallback, 0.08);
+
+      // If playOneShot returned -1 (clip not available), fire immediately
+      if (returnedToken === -1) {
+        if (this._pendingCast) this._pendingCast.fired = true;
+        impactCallback();
+      }
     } else {
       // Fallback: 立即触发
+      if (this._pendingCast) this._pendingCast.fired = true;
       if (impactCallback) impactCallback();
+    }
+  }
+
+  /** Cancel any pending cast — called on Death, Dodge, reset */
+  cancelPendingCast() {
+    if (this._pendingCast && !this._pendingCast.fired) {
+      this._pendingCast.fired = true;
+    }
+    this._pendingCast = null;
+    if (this.animController) {
+      this.animController.cancelPendingImpact();
     }
   }
 
@@ -263,7 +365,7 @@ export class Player {
   onCast() {
     this._castGlow = 1;
     if (this.animController && !this._usingFallback) {
-      this.animController.playOneShot('Cast', null, 0.1);
+      this.animController.playOneShot('CastBasic', null, 0.1);
     }
   }
 
@@ -273,6 +375,9 @@ export class Player {
 
   tryDodge(mv, cameraYaw) {
     if (this.dead || this.dodgeCd > 0 || this._dodgeT > 0) return false;
+
+    // Dodge cancels any pending cast
+    this.cancelPendingCast();
 
     if (mv.x !== 0 || mv.y !== 0) {
       const fwd = new THREE.Vector3(-Math.sin(cameraYaw), 0, -Math.cos(cameraYaw));
@@ -410,6 +515,7 @@ export class Player {
 
   die() {
     this.dead = true;
+    this.cancelPendingCast();
     if (this.animController && !this._usingFallback) {
       this.animController.playOneShot('Death', null, 0.15);
     } else {
@@ -433,6 +539,9 @@ export class Player {
     this._facing = Math.PI;
     this.group.rotation.set(0, this._facing, 0);
     this.group.position.copy(this.position);
+
+    // Cancel any pending cast before reset
+    this.cancelPendingCast();
 
     if (this.animController) {
       this.animController.reset();

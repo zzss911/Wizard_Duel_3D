@@ -3,23 +3,34 @@ import * as THREE from 'three';
 /**
  * PlayerAnimationController
  *
+ * v0.3.0: Cast split into CastBasic / CastQ / CastE with distinct priorities and impact times.
+ *
  * 管理 Player 的 AnimationMixer，支持：
  * - 循环动画（Idle, Run）
- * - one-shot 动画（Cast, Dodge, Hit, Death）
+ * - one-shot 动画（CastBasic, CastQ, CastE, Dodge, Hit, Death）
  * - 优先级系统（高优先级不可被低优先级打断）
  * - impact frame 回调（用于施法/伤害同步）
- * - 平滑 fade 切换
+ * - token-based generation 防 stale callback
  * - 支持程序化动画 和 GLB AnimationClip
  */
 
-const ANIM_NAMES = ['Idle', 'Run', 'Cast', 'Dodge', 'Hit', 'Death'];
+const ANIM_NAMES = [
+  'Idle', 'Run',
+  'CastBasic', 'CastQ', 'CastE',
+  'Dodge', 'Hit', 'Death',
+];
 
-const ONE_SHOT_ANIMS = ['Cast', 'Dodge', 'Hit', 'Death'];
+const ONE_SHOT_ANIMS = [
+  'CastBasic', 'CastQ', 'CastE',
+  'Dodge', 'Hit', 'Death',
+];
 
 const ANIM_PRIORITY = {
   Death: 100,
   Dodge: 80,
-  Cast: 60,
+  CastQ: 65,
+  CastE: 60,
+  CastBasic: 50,
   Hit: 40,
   Run: 20,
   Idle: 10,
@@ -27,12 +38,21 @@ const ANIM_PRIORITY = {
 
 // Impact time as fraction of clip duration (0~1)
 const ANIM_IMPACT_TIME = {
-  Cast: 0.55,
+  CastBasic: 0.50,
+  CastQ: 0.64,
+  CastE: 0.55,
   Dodge: 0.0,
   Hit: 0.50,
   Death: 0.50,
   Run: 0,
   Idle: 0,
+};
+
+// Map fallback clip names: if CastBasic/Q/E not available, try Cast, then immediate
+const CAST_FALLBACK_MAP = {
+  CastBasic: ['CastBasic', 'Cast'],
+  CastQ: ['CastQ', 'Cast'],
+  CastE: ['CastE', 'Cast'],
 };
 
 export class PlayerAnimationController {
@@ -56,10 +76,19 @@ export class PlayerAnimationController {
     this._oneShotPriority = 0;
     this._pendingImpact = null;
     this._fadeTime = 0.2;
+    this._castGeneration = 0;
 
     for (const name of ANIM_NAMES) {
-      const clip = clips[name];
-      if (!clip) continue;
+      let clip = clips[name];
+      if (!clip) {
+        // Fallback: Cast* → Cast
+        if (name in CAST_FALLBACK_MAP) {
+          for (const fb of CAST_FALLBACK_MAP[name]) {
+            if (clips[fb]) { clip = clips[fb]; break; }
+          }
+        }
+        if (!clip) continue;
+      }
       const action = this._mixer.clipAction(clip);
       if (ONE_SHOT_ANIMS.includes(name)) {
         action.setLoop(THREE.LoopOnce, 1);
@@ -73,6 +102,12 @@ export class PlayerAnimationController {
     this._mixer.addEventListener('finished', (e) => {
       const finishedName = this._actionToName(e.action);
       if (!finishedName || finishedName !== this._oneShotName) return;
+
+      // If one-shot finished but impact never fired, fire safety fallback
+      if (this._pendingImpact && !this._pendingImpact.fired && finishedName !== 'Death' && finishedName !== 'Dodge') {
+        this._pendingImpact.fired = true;
+        this._pendingImpact.callback();
+      }
 
       this._oneShotActive = false;
       this._oneShotName = null;
@@ -125,16 +160,34 @@ export class PlayerAnimationController {
     this._playLoopInternal(animName, fadeTime);
   }
 
+  /**
+   * Play a one-shot animation with optional impact callback.
+   * Uses token-based generation to prevent stale callbacks.
+   * @param {string} animName
+   * @param {function|null} impactCallback
+   * @param {number} fadeTime
+   * @returns {number} token — incremented generation for this cast
+   */
   playOneShot(animName, impactCallback, fadeTime) {
     const action = this._actions[animName];
-    if (!action) return;
+    if (!action) {
+      // Clip not available — fire callback immediately
+      if (impactCallback) impactCallback();
+      return -1;
+    }
 
     fadeTime = fadeTime !== undefined ? fadeTime : 0.12;
 
-    if (this._currentAnimName === 'Death' && animName !== 'Death') return;
+    // Death is terminal
+    if (this._currentAnimName === 'Death' && animName !== 'Death') return -1;
 
     const myPriority = ANIM_PRIORITY[animName] || 0;
-    if (this._oneShotActive && myPriority < this._oneShotPriority) return;
+    if (this._oneShotActive && myPriority < this._oneShotPriority) return -1;
+
+    // Cancel any existing pending impact (stale callback prevention)
+    if (this._pendingImpact && !this._pendingImpact.fired) {
+      this._pendingImpact.fired = true; // Mark as fired so consumeImpact won't double-fire
+    }
 
     if (this._currentAction && this._currentAction !== action) {
       this._currentAction.fadeOut(fadeTime);
@@ -152,18 +205,24 @@ export class PlayerAnimationController {
     this._oneShotName = animName;
     this._oneShotPriority = myPriority;
 
+    // Token-based generation for impact sync
+    const token = ++this._castGeneration;
+
     if (impactCallback && ANIM_IMPACT_TIME[animName] > 0) {
       this._pendingImpact = {
         callback: impactCallback,
         fired: false,
         time: ANIM_IMPACT_TIME[animName],
+        token: token,
       };
-    } else if (impactCallback && ANIM_IMPACT_TIME[animName] === 0) {
+    } else if (impactCallback && (ANIM_IMPACT_TIME[animName] === 0 || ANIM_IMPACT_TIME[animName] === undefined)) {
       impactCallback();
       this._pendingImpact = null;
     } else {
       this._pendingImpact = null;
     }
+
+    return token;
   }
 
   consumeImpact() {
@@ -173,7 +232,9 @@ export class PlayerAnimationController {
     const action = this._actions[this._oneShotName];
     if (!action) return;
 
-    const clip = this._clips[this._oneShotName];
+    const clip = this._clips[this._oneShotName]
+      || this._clips[CAST_FALLBACK_MAP[this._oneShotName]?.[0]]
+      || this._clips[CAST_FALLBACK_MAP[this._oneShotName]?.[1]];
     if (!clip) return;
 
     const duration = clip.duration;
@@ -185,20 +246,29 @@ export class PlayerAnimationController {
     }
   }
 
+  /** Cancel any pending impact (used on Death, Dodge, reset) */
+  cancelPendingImpact() {
+    if (this._pendingImpact && !this._pendingImpact.fired) {
+      this._pendingImpact.fired = true; // Mark fired to prevent stale trigger
+    }
+    this._pendingImpact = null;
+  }
+
   update(dt) {
     this._mixer.update(dt);
     this.consumeImpact();
   }
 
   reset() {
+    this.cancelPendingImpact();
     if (this._oneShotActive) {
       const action = this._actions[this._oneShotName];
       if (action) action.stop();
       this._oneShotActive = false;
       this._oneShotName = null;
       this._oneShotPriority = 0;
-      this._pendingImpact = null;
     }
+    this._castGeneration++;
     this._loopAnimName = 'Idle';
     this._playLoopInternal('Idle', 0.01);
   }
@@ -218,5 +288,10 @@ export class PlayerAnimationController {
 
   get hasAnims() {
     return Object.keys(this._actions).length > 0;
+  }
+
+  get pendingCastType() {
+    if (!this._pendingImpact || this._pendingImpact.fired) return null;
+    return this._oneShotName;
   }
 }
