@@ -559,11 +559,26 @@ html, body {
     0 3px 8px rgba(0, 0, 0, 0.9);
   pointer-events: none;
   opacity: 0;
-  animation: title-fade-in 1.2s ease-out 0.3s forwards;
+  animation: title-fade-in 1.2s ease-out 0.3s forwards, title-glow 4s ease-in-out 1.5s infinite;
 }
 @keyframes title-fade-in {
   0%   { opacity: 0; transform: translateX(-50%) translateY(-20px); }
   100% { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+@keyframes title-glow {
+  0%, 100% { text-shadow: 0 0 20px rgba(255, 190, 80, 0.7), 0 0 40px rgba(255, 160, 50, 0.4), 0 3px 8px rgba(0, 0, 0, 0.9); }
+  50%      { text-shadow: 0 0 28px rgba(255, 210, 100, 0.85), 0 0 55px rgba(255, 180, 60, 0.55), 0 3px 8px rgba(0, 0, 0, 0.9); }
+}
+
+.version-label {
+  position: absolute;
+  top: calc(40px + env(safe-area-inset-top));
+  right: calc(20px + env(safe-area-inset-right));
+  font-size: 11px;
+  color: rgba(255, 200, 120, 0.4);
+  font-family: monospace;
+  letter-spacing: 1px;
+  pointer-events: none;
 }
 
 .boss-entry {
@@ -1285,4 +1300,139 @@ html, body {
   .boss-select-actions button {
     min-width: 200px; min-height: 56px; font-size: 16px;
   }
+}
+
+/* ==================== Release Polish ==================== */
+
+/* Button focus styles for accessibility */
+.main-menu-actions button:focus-visible,
+#btn-boss-mode:focus-visible,
+.boss-select-actions button:focus-visible,
+.boss-result-actions button:focus-visible,
+#btn-settings-back:focus-visible,
+.toggle-btn:focus-visible,
+.quality-btn:focus-visible,
+#btn-start-duel:focus-visible,
+#btn-retry-tutorial:focus-visible,
+.end-actions button:focus-visible {
+  outline: 2px solid rgba(255, 220, 120, 0.8);
+  outline-offset: 2px;
+}
+
+/* Result panel buttons minimum height */
+.boss-result-actions button,
+.boss-select-actions button {
+  min-height: 48px;
+}
+.end-actions button {
+  min-height: 48px;
+}
+
+/* Loading overlay */
+#game-loading {
+  position: fixed; inset: 0; z-index: 999;
+  display: flex; align-items: center; justify-content: center;
+  background: #0a0e1a;
+  transition: opacity 0.5s ease;
+}
+#game-loading.hidden {
+  opacity: 0; pointer-events: none;
+}
+#game-loading-text {
+  color: rgba(255, 200, 120, 0.6);
+  font-size: 15px;
+  letter-spacing: 4px;
+}
+
+/* Mobile: Boss health bar doesn't overlap cinematic skill names */
+@media (max-width: 768px) and (pointer: coarse) {
+  #boss-health-bar {
+    min-width: 280px;
+    top: calc(8px + env(safe-area-inset-top));
+  }
+  #boss-bar-name { font-size: 16px; letter-spacing: 1px; }
+  #boss-bar-sub { font-size: 11px; }
+  .boss-bar-track { height: 10px; }
+  #boss-bar-phase { font-size: 10px; padding: 2px 10px; }
+
+  /* Ensure skill buttons have enough spacing */
+  #btn-dodge, #btn-skill1, #btn-skill2 {
+    min-width: 64px; min-height: 64px;
+  }
+
+  /* Settings panel: fit on screen */
+  .settings-card {
+    max-height: 85vh;
+    overflow-y: auto;
+  }
+
+  /* Main menu buttons: bigger touch targets */
+  .main-menu-actions button {
+    min-width: 140px;
+    min-height: 56px;
+    font-size: 16px;
+    padding: 12px 24px;
+  }
+  #btn-boss-mode {
+    padding: 16px 20px;
+    font-size: 15px;
+  }
+  .version-label {
+    font-size: 10px;
+  }
+}
+
+/* Landscape phone: compact layout */
+@media (max-height: 420px) and (orientation: landscape) {
+  .game-title {
+    font-size: 28px;
+    letter-spacing: 6px;
+    top: 10px;
+  }
+  .version-label { top: 10px; font-size: 9px; }
+  .main-menu-actions {
+    bottom: 16px;
+    gap: 8px;
+  }
+  .main-menu-actions button {
+    min-height: 44px;
+    padding: 8px 20px;
+    font-size: 14px;
+  }
+  #btn-boss-mode {
+    padding: 10px 16px;
+    font-size: 13px;
+    bottom: 16px;
+  }
+  .boss-entry { bottom: 16px; }
+  #boss-health-bar {
+    min-width: 260px;
+    top: 6px;
+  }
+  #boss-bar-name { font-size: 14px; }
+  .boss-bar-track { height: 8px; }
+  #hud {
+    padding: 4px 8px;
+  }
+  .hp-bar { width: min(30vw, 200px); }
+  .hp-label { font-size: 11px; }
+  #hint-desktop { display: none; }
+  #rotate-tip { display: none; }
+  .skill-btn { transform: scale(0.85); }
+}
+
+/* Settings panel: focus on quality buttons */
+.quality-btn:focus-visible {
+  outline: 2px solid rgba(255, 220, 120, 0.8);
+  outline-offset: 2px;
+}
+
+/* Continue button: subtle hint when disabled */
+#btn-menu-continue {
+  opacity: 0.5;
+}
+#btn-menu-continue:hover {
+  opacity: 0.7;
+  transform: none;
+  box-shadow: none;
 }

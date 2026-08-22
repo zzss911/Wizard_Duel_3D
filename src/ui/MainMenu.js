@@ -12,14 +12,17 @@ export class MainMenu {
     this.btnBoss = document.getElementById('btn-boss-mode');
     this.btnBossBack = document.getElementById('btn-boss-back');
     this.continueToast = document.getElementById('continue-toast');
+    this._hint = document.getElementById('hint-desktop');
   }
 
   show() {
     this.el.classList.add('show');
+    if (this._hint) this._hint.style.display = 'none';
   }
 
   hide() {
     this.el.classList.remove('show');
+    if (this._hint) this._hint.style.display = '';
   }
 
   showBossPreview() {

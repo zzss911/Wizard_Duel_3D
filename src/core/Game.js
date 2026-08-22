@@ -187,10 +187,27 @@ export class Game {
     this.paused = false;
     this._aimDir = new THREE.Vector3();
 
+    // ---------- Debug 性能监控 (?debug=1) ----------
+    this._debugMode = new URLSearchParams(window.location.search).has('debug');
+    if (this._debugMode) {
+      this._debugEl = document.createElement('div');
+      this._debugEl.id = 'debug-overlay';
+      this._debugEl.style.cssText = 'position:fixed;top:4px;left:4px;background:rgba(0,0,0,0.8);color:#0f0;font:11px monospace;padding:6px 10px;border-radius:4px;z-index:99999;pointer-events:none;white-space:pre;line-height:1.5';
+      document.body.appendChild(this._debugEl);
+      this._debugFrames = 0;
+      this._debugFps = 0;
+      this._debugFpsTimer = 0;
+    }
+
     window.addEventListener('resize', () => this.onResize());
     document.addEventListener('visibilitychange', () => {
       this.paused = document.hidden;
-      if (!this.paused) this.clock.getDelta();
+      if (this.paused) {
+        if (this.audio.ctx && this.audio.ctx.state === 'running') this.audio.ctx.suspend();
+      } else {
+        if (this.audio.ctx && this.audio.ctx.state === 'suspended') this.audio.ctx.resume();
+        this.clock.getDelta();
+      }
     });
 
     // ---------- 启动流程 ----------
@@ -200,6 +217,11 @@ export class Game {
     // 主菜单摄像机初始化
     this._menuTime = 0;
     this._menuCamPos = new THREE.Vector3();
+
+    // 音频设置
+    const savedSettings = this.settingsPanel.getSettings();
+    this.audio.setVolume(savedSettings.volume);
+    this.audio.setEnabled(savedSettings.soundOn);
 
     // 设置面板回调
     this.settingsPanel.setCallbacks({
@@ -214,7 +236,18 @@ export class Game {
     // 主菜单按钮回调
     this.mainMenu.setCallbacks({
       onDuel: () => this._handleStartDuel(),
-      onContinue: () => this.mainMenu.showContinueToast(),
+      onContinue: () => {
+        // 检查是否有可继续的游戏状态
+        const inProgress = this.phase === GAME_PHASE.GAMEOVER || this.phase === GAME_PHASE.PLAYING;
+        if (inProgress) {
+          this.mainMenu.hide();
+          this.hud.hideEnd();
+          this.gameOver = false;
+          this.restart();
+        } else {
+          this.mainMenu.showContinueToast();
+        }
+      },
       onSettings: () => this.settingsPanel.show(),
       onBoss: () => this._enterBossSelect(),
     });
@@ -229,24 +262,37 @@ export class Game {
     });
 
     // 应用已保存的设置
-    const savedSettings = this.settingsPanel.getSettings();
     this._applyQuality(savedSettings.quality);
 
     this.mainMenu.show();
   }
 
   _applyQuality(quality) {
+    this._qualityLevel = quality;
     if (quality === 'low') {
       this.renderer.setPixelRatio(1);
       if (this.composer) { this.composer.enabled = false; }
+      this.renderer.shadowMap.enabled = false;
+      this._particleScale = 0.4;
+      this._lightScale = 0;
     } else if (quality === 'medium') {
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
       if (this.composer) { this.composer.enabled = true; }
       if (this.bloomPass) { this.bloomPass.strength = 0.35; }
+      this.renderer.shadowMap.enabled = true;
+      this._particleScale = 0.7;
+      this._lightScale = 0.5;
     } else {
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
       if (this.composer) { this.composer.enabled = true; }
       if (this.bloomPass) { this.bloomPass.strength = 0.55; }
+      this.renderer.shadowMap.enabled = true;
+      this._particleScale = 1.0;
+      this._lightScale = 1.0;
+    }
+    // Apply particle scale to Effects
+    if (this.effects && this.effects.setParticleScale) {
+      this.effects.setParticleScale(this._particleScale);
     }
   }
 
@@ -383,6 +429,7 @@ export class Game {
     this.hud.hideStart();
     this.mainMenu.hide();
     this.input.setGameplayEnabled(false);
+    this.audio.playDuelAmbience();
   }
 
   /* ==================== 倒计时 & 保护期 ==================== */
@@ -432,6 +479,17 @@ export class Game {
     if (this.paused) return;
     const dt = Math.min(this.clock.getDelta(), 0.05);
 
+    // Debug overlay
+    if (this._debugMode) {
+      this._debugFrames++;
+      this._debugFpsTimer += dt;
+      if (this._debugFpsTimer >= 0.5) {
+        this._debugFps = Math.round(this._debugFrames / this._debugFpsTimer);
+        this._debugFrames = 0;
+        this._debugFpsTimer = 0;
+      }
+    }
+
     // ---- 主菜单状态：仅渲染背景 + 菜单摄像机 ----
     if (this.phase === GAME_PHASE.MAIN_MENU) {
       this._menuTime += dt;
@@ -443,6 +501,7 @@ export class Game {
       this.updateMenuCamera(dt);
       if (this.composer && this.composer.enabled !== false) this.composer.render();
       else this.renderer.render(this.scene, this.camera);
+      this._updateDebug(dt);
       return;
     }
 
@@ -455,6 +514,7 @@ export class Game {
       this.updateMenuCamera(dt);
       if (this.composer && this.composer.enabled !== false) this.composer.render();
       else this.renderer.render(this.scene, this.camera);
+      this._updateDebug(dt);
       return;
     }
 
@@ -564,6 +624,24 @@ export class Game {
 
     if (this.composer) this.composer.render();
     else this.renderer.render(this.scene, this.camera);
+    this._updateDebug(dt);
+  }
+
+  _updateDebug(dt) {
+    if (!this._debugMode || !this._debugEl) return;
+    const info = this.renderer.info;
+    const bc = this.bossController;
+    const bossState = bc ? bc.state : '-';
+    const bossAnim = bc && bc.boss ? (bc.boss._currentAnim || '-') : '-';
+    const animTime = bc && bc.boss && bc.boss._mixer ? bc.boss._mixer.time.toFixed(2) : '-';
+    this._debugEl.textContent =
+      `FPS: ${this._debugFps}\n` +
+      `Draw: ${info.render.calls}\n` +
+      `Tris: ${info.render.triangles}\n` +
+      `Geos: ${info.memory.geometries} Tex: ${info.memory.textures}\n` +
+      `Phase: ${this.phase}\n` +
+      `Boss: ${bossState}\n` +
+      `Anim: ${bossAnim} (${animTime}s)`;
   }
 
   updateCamera(dt) {
@@ -725,6 +803,7 @@ export class Game {
     this.enemy.setCastGlow(0);
     // 清空所有残余弹道，防止死后继续造成伤害
     for (const p of this.combat.pool) p.despawn();
+    this.audio.fadeOutMusic(1.0);
 
     // 连胜计数
     if (win) {
@@ -799,6 +878,7 @@ export class Game {
     this.bossController.start(this.player, this.arena);
 
     this.input.setGameplayEnabled(true);
+    this.audio.playBossAmbience();
   }
 
   _onBossComplete(action) {
@@ -852,6 +932,7 @@ export class Game {
     this.input.setGameplayEnabled(false);
     this.hud.hideEnd();
     this.mainMenu.show();
+    this.audio.playMenuAmbience();
   }
 
   restart() {

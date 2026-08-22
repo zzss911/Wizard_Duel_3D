@@ -323,7 +323,6 @@ export class WardenBoss {
     }
 
     const loaded = Object.keys(this._actions);
-    console.log('[WardenBoss] Animations loaded:', loaded.join(', '));
 
     // Start playing Idle immediately
     this._playAnimInternal('Idle', 0.01, false);

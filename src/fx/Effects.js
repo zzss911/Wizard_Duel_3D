@@ -11,6 +11,7 @@ export class Effects {
   constructor(scene) {
     this.scene = scene;
     this.bursts = [];
+    this._particleScale = 1.0;
 
     for (let i = 0; i < BURST_COUNT; i++) {
       const geo = new THREE.BufferGeometry();
@@ -37,8 +38,10 @@ export class Effects {
   burst(worldPos, color = 0xffd76a, strength = 10) {
     const b = this.bursts.find((b) => !b.active) || this.bursts[0];
     const pos = b.points.geometry.attributes.position.array;
+    const count = Math.max(1, Math.round(PARTICLES * this._particleScale));
 
     for (let i = 0; i < PARTICLES; i++) {
+      const active = i < count;
       pos[i * 3] = worldPos.x;
       pos[i * 3 + 1] = worldPos.y;
       pos[i * 3 + 2] = worldPos.z;
@@ -57,6 +60,10 @@ export class Effects {
     b.points.visible = true;
     b.life = 0.45;
     b.active = true;
+  }
+
+  setParticleScale(scale) {
+    this._particleScale = Math.max(0.2, Math.min(1.0, scale));
   }
 
   update(dt) {

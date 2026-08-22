@@ -200,4 +200,179 @@ export class MagicAudio {
     src.start(t0);
     src.stop(t0 + 0.2);
   }
+
+  /* ==================== 程序化 BGM / Ambient ==================== */
+
+  /** 停止当前 BGM */
+  stopMusic() {
+    if (this._bgmNodes) {
+      for (const n of this._bgmNodes) {
+        try { n.stop?.(); } catch(e) {}
+        try { n.disconnect?.(); } catch(e) {}
+      }
+      this._bgmNodes = null;
+    }
+    if (this._bgmGain) {
+      this._bgmGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.3);
+      const oldGain = this._bgmGain;
+      setTimeout(() => { try { oldGain.disconnect(); } catch(e){} }, 800);
+      this._bgmGain = null;
+    }
+    this._bgmType = null;
+  }
+
+  _stopBgmInternal() {
+    if (this._bgmNodes) {
+      for (const n of this._bgmNodes) {
+        try { n.stop?.(); } catch(e) {}
+        try { n.disconnect?.(); } catch(e) {}
+      }
+      this._bgmNodes = null;
+    }
+    if (this._bgmGain) {
+      try { this._bgmGain.disconnect(); } catch(e) {}
+      this._bgmGain = null;
+    }
+  }
+
+  _startBgm(type) {
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    if (this._bgmType === type) return;
+    this._stopBgmInternal();
+
+    const t0 = this.ctx.currentTime;
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0, t0);
+    gain.gain.linearRampToValueAtTime(0.12, t0 + 1.5);
+    gain.connect(this.master);
+    this._bgmGain = gain;
+    this._bgmNodes = [];
+    this._bgmType = type;
+
+    if (type === 'menu') {
+      this._createPad(gain, [
+        [55, 'sine', 0.5],
+        [82.4, 'sine', 0.3],
+        [110, 'triangle', 0.2],
+      ], 4.0, 0.08);
+      this._createNoiseWind(gain, 0.015);
+    } else if (type === 'duel') {
+      this._createPad(gain, [
+        [65.4, 'sine', 0.4],
+        [98, 'sine', 0.3],
+        [130.8, 'triangle', 0.15],
+      ], 3.0, 0.07);
+      this._createPulse(gain, 65.4, 0.5);
+    } else if (type === 'boss') {
+      this._createPad(gain, [
+        [36.7, 'sine', 0.6],
+        [55, 'sine', 0.35],
+        [73.4, 'sawtooth', 0.1],
+      ], 5.0, 0.1);
+      this._createPulse(gain, 36.7, 0.7);
+      this._createNoiseWind(gain, 0.025);
+    }
+  }
+
+  /** 创建低频 pad drone（持续循环） */
+  _createPad(dst, freqs, interval, vol) {
+    for (const [freq, waveType, gain] of freqs) {
+      const osc = this.ctx.createOscillator();
+      osc.type = waveType;
+      osc.frequency.value = freq;
+
+      const lfo = this.ctx.createOscillator();
+      lfo.frequency.value = 0.08 + Math.random() * 0.15;
+      const lfoGain = this.ctx.createGain();
+      lfoGain.gain.value = freq * 0.01;
+      lfo.connect(lfoGain);
+      lfoGain.connect(osc.frequency);
+
+      const g = this.ctx.createGain();
+      g.gain.value = gain * vol;
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 600;
+      osc.connect(filter).connect(g).connect(dst);
+
+      osc.start();
+      lfo.start();
+      this._bgmNodes.push(osc, lfo);
+    }
+  }
+
+  /** 创建低频脉冲 */
+  _createPulse(dst, freq, interval) {
+    const pulse = () => {
+      if (!this._bgmNodes) return;
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, t);
+      osc.frequency.exponentialRampToValueAtTime(freq * 0.5, t + interval * 0.8);
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.08, t + 0.05);
+      g.gain.exponentialRampToValueAtTime(0.001, t + interval * 0.9);
+      osc.connect(g).connect(dst);
+      osc.start(t);
+      osc.stop(t + interval);
+      this._bgmNodes.push(osc);
+      setTimeout(pulse, interval * 1000);
+    };
+    setTimeout(pulse, 500);
+  }
+
+  /** 创建噪声风声 */
+  _createNoiseWind(dst, vol) {
+    const src = this.ctx.createBufferSource();
+    src.buffer = this._noiseBuffer;
+    src.loop = true;
+    src.playbackRate.value = 0.3;
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = 400;
+    filter.Q.value = 0.5;
+    const lfo = this.ctx.createOscillator();
+    lfo.frequency.value = 0.12;
+    const lfoGain = this.ctx.createGain();
+    lfoGain.gain.value = 200;
+    lfo.connect(lfoGain);
+    lfoGain.connect(filter.frequency);
+    const g = this.ctx.createGain();
+    g.gain.value = vol;
+    src.connect(filter).connect(g).connect(dst);
+    src.start();
+    lfo.start();
+    this._bgmNodes.push(src, lfo);
+  }
+
+  playMenuAmbience() { this._startBgm('menu'); }
+  playDuelAmbience() { this._startBgm('duel'); }
+  playBossAmbience() { this._startBgm('boss'); }
+
+  /** Boss Phase 2: 更低沉、更压迫 */
+  setBossPhase(phase) {
+    if (!this._bgmNodes || this._bgmType !== 'boss') return;
+    if (phase === 2) {
+      const t = this.ctx.currentTime;
+      this._bgmGain.gain.setTargetAtTime(0.18, t, 0.5);
+      const sub = this.ctx.createOscillator();
+      sub.type = 'sine';
+      sub.frequency.value = 27.5;
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.15, t + 2);
+      sub.connect(g).connect(this._bgmGain);
+      sub.start();
+      this._bgmNodes.push(sub);
+    }
+  }
+
+  /** Boss 死亡后音乐快速衰减 */
+  fadeOutMusic(duration = 1.5) {
+    if (this._bgmGain) {
+      this._bgmGain.gain.setTargetAtTime(0, this.ctx.currentTime, duration / 3);
+    }
+  }
 }

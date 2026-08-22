@@ -288,6 +288,7 @@ export class BossBattleController {
       this.timer = 0;
       this.ai.triggerPhaseChange();
       this._showPhaseChangeEffect();
+      this.audio.setBossPhase(2);
       return;
     }
 
@@ -351,6 +352,8 @@ export class BossBattleController {
     this.timer = 0;
     // 清空弹道
     for (const p of this.combat.pool) p.despawn();
+    // BGM 衰减
+    this.audio.fadeOutMusic(2.0);
 
     // Start death cinematic camera
     if (this._camera) {
