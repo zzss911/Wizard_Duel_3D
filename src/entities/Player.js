@@ -3,12 +3,30 @@ import { buildPlayerModel } from '../player/PlayerModel.js';
 import { PlayerAnimationController } from '../player/PlayerAnimationController.js';
 import { buildWizard, PLAYER_PALETTE } from './WizardModel.js';
 
+let _glbLoadPromise = null;
+
+async function _loadPlayerGLB() {
+  if (_glbLoadPromise) return _glbLoadPromise;
+  _glbLoadPromise = (async () => {
+    try {
+      const { GLTFLoader } = await import('three/addons/GLTFLoader.js');
+      const loader = new GLTFLoader();
+      const url = 'assets/models/player_rigged.glb';
+      const gltf = await loader.loadAsync(url);
+      return gltf;
+    } catch (e) {
+      console.warn('[Player] GLB load failed, will use programmatic model:', e);
+      return null;
+    }
+  })();
+  return _glbLoadPromise;
+}
+
 /**
  * Player —— 玩家角色（魔法决斗师）
  *
- * v0.2.0：升级为正式骨骼绑定模型 + 动画系统。
- * 模型为视觉层，不影响任何战斗逻辑 / 碰撞 / 手感。
- * 保留旧 WizardModel 作为 fallback。
+ * v0.2.0-GLB：正式接入腾讯混元 3D 生成的 GLB 模型。
+ * 加载优先级：1. player_rigged.glb  2. 程序化 PlayerModel  3. 旧 WizardModel
  */
 export class Player {
   constructor(scene) {
@@ -50,7 +68,100 @@ export class Player {
     this._isMoving = false;
     this._prevDodgeT = 0;
 
+    // ---- Cast impact sync ----
+    this._pendingCast = null;
+
     this._buildMesh();
+
+    // ---- 异步加载 GLB ----
+    this._glbLoaded = false;
+    this._initGLBLoad();
+  }
+
+  _initGLBLoad() {
+    _loadPlayerGLB().then((gltf) => {
+      if (!gltf || this._glbLoaded) return;
+      this._applyGLB(gltf);
+    }).catch(() => {});
+  }
+
+  _applyGLB(gltf) {
+    try {
+      const model = gltf.scene;
+      const clips = gltf.animations || [];
+
+      if (clips.length === 0) {
+        console.warn('[Player] GLB has no animations, keeping programmatic model');
+        return;
+      }
+
+      // Remove existing model
+      if (this._modelData) {
+        this.visualRoot.remove(this._modelData.group);
+        this._modelData.group.traverse((child) => {
+          if (child.isMesh) {
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) {
+              if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+              else child.material.dispose();
+            }
+          }
+        });
+      }
+
+      // Collect skeleton and find SkinnedMesh for mixer root
+      let skeleton = null;
+      let skinnedMesh = null;
+      model.traverse((child) => {
+        if (child.isSkinnedMesh && child.skeleton) {
+          skeleton = child.skeleton;
+          skinnedMesh = child;
+        }
+      });
+
+      // Use SkinnedMesh as mixer root so PropertyBinding can access skeleton
+      const mixerRoot = skinnedMesh || model;
+      this.visualRoot.add(model);
+
+      // Build clips map
+      const clipsMap = {};
+      for (const clip of clips) {
+        const name = clip.name;
+        clipsMap[name] = clip;
+      }
+
+      // Check if we have all required animations
+      const required = ['Idle', 'Run', 'Cast', 'Dodge', 'Hit', 'Death'];
+      const hasAll = required.every(r => clipsMap[r]);
+      if (!hasAll) {
+        console.warn('[Player] GLB missing animations:', required.filter(r => !clipsMap[r]));
+      }
+
+      // Dispose old animController
+      if (this.animController) {
+        this.animController.dispose && this.animController.dispose();
+      }
+
+      // Create new animController with GLB clips
+      this.animController = new PlayerAnimationController(
+        mixerRoot, skeleton, clipsMap, true
+      );
+
+      // Collect flash materials from GLB
+      this._flashMaterials = this._collectFlashMaterials(model);
+
+      // Effect anchors — approximate positions
+      this.castAnchor.position.set(0, 1.4, 0.3);
+      this.chestAnchor.position.set(0, 1.1, 0);
+      this.headAnchor.position.set(0, 1.6, 0);
+
+      this._glbLoaded = true;
+      this._usingFallback = false;
+      this._modelData = null;
+      console.log('[Player] GLB model loaded successfully');
+    } catch (e) {
+      console.warn('[Player] Failed to apply GLB, keeping programmatic model:', e);
+    }
   }
 
   _buildMesh() {
@@ -63,22 +174,20 @@ export class Player {
     this.chestAnchor = new THREE.Group();
     this.headAnchor = new THREE.Group();
 
-    // 尝试构建正式模型，失败则 fallback
+    // 尝试构建程序化模型，失败则 fallback
     try {
       const model = buildPlayerModel();
       this._modelData = model;
       this.visualRoot.add(model.group);
       this.group.add(model.castAnchor, model.chestAnchor, model.headAnchor);
 
-      // 引用模型材质用于效果
       this.gemMat = model.gemMat;
       this.glowSprite = model.glowSprite;
       this.robeMat = model.robeMat;
       this._flashMaterials = this._collectFlashMaterials(model.group);
 
-      // 创建动画控制器
       this.animController = new PlayerAnimationController(
-        model.bones.hips, model.skeleton, model.clips
+        model.bones.hips, model.skeleton, model.clips, false
       );
 
       this._usingFallback = false;
@@ -116,7 +225,6 @@ export class Player {
     this.animController = null;
     this._usingFallback = true;
 
-    // fallback 锚点
     this.castAnchor.position.set(0, 1.5, 0.3);
     this.chestAnchor.position.set(0, 1.2, 0);
     this.headAnchor.position.set(0, 1.7, 0);
@@ -137,6 +245,22 @@ export class Player {
     );
   }
 
+  /**
+   * 施法请求 — 播放 Cast 动画，projectile 在 55% 时由 consumeImpact 触发。
+   * 如果没有动画系统（fallback），则立即触发 callback。
+   * @param {function} impactCallback - 在 impact frame 调用
+   */
+  requestCast(impactCallback) {
+    this._castGlow = 1;
+    if (this.animController && !this._usingFallback) {
+      this.animController.playOneShot('Cast', impactCallback, 0.1);
+    } else {
+      // Fallback: 立即触发
+      if (impactCallback) impactCallback();
+    }
+  }
+
+  /** 旧接口兼容 — 不带 impact sync */
   onCast() {
     this._castGlow = 1;
     if (this.animController && !this._usingFallback) {
@@ -235,7 +359,6 @@ export class Player {
 
     // ---- 相对摄像机方向移动 ----
     const mv = input.getMoveVector();
-    const wasMoving = this._isMoving;
     this._isMoving = (mv.x !== 0 || mv.y !== 0);
 
     if (this._isMoving) {
@@ -264,7 +387,7 @@ export class Player {
 
     // ---- 动画状态切换 ----
     if (this.animController) {
-      if (this._isMoving && !this._dodgeT > 0) {
+      if (this._isMoving && !(this._dodgeT > 0)) {
         this.animController.setLoopAnim('Run');
       } else if (!this._isMoving) {
         this.animController.setLoopAnim('Idle');
@@ -312,12 +435,10 @@ export class Player {
     this.group.rotation.set(0, this._facing, 0);
     this.group.position.copy(this.position);
 
-    // 重置动画
     if (this.animController) {
       this.animController.reset();
     }
 
-    // 重置闪烁
     this._flash = 0;
     for (const mat of this._flashMaterials) {
       if (mat.emissive) {

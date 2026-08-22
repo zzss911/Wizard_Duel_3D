@@ -59,11 +59,47 @@ export class CombatSystem {
     return true;
   }
 
+  /** 检查是否可以开火（不消耗冷却） */
+  canFire(owner) {
+    return !owner.dead && owner.cooldown <= 0;
+  }
+
+  /** 提交开火：消耗冷却 + 生成弹道 */
+  commitFire(owner, dir, opts = {}) {
+    if (owner.dead || owner.cooldown > 0) return false;
+    const p = this._spawn(owner, dir, {
+      speed: opts.speed ?? this.projectileSpeed,
+      damage: opts.damage ?? this.baseDamage,
+      tint: opts.tint ?? 0x8fd0ff,
+    });
+    if (!p) return false;
+    owner.cooldown = owner.attackCooldown;
+    return true;
+  }
+
   /**
    * 技能入口：检查技能冷却（不占普攻冷却）。
    * @param {1|2} id 1=爆裂咒 2=束缚咒
    */
   castSkill(owner, id, dir) {
+    const sk = SKILLS[id];
+    if (!sk || owner.dead) return false;
+    if (owner[sk.cdKey] > 0) return false;
+    const p = this._spawn(owner, dir, sk);
+    if (!p) return false;
+    owner[sk.cdKey] = owner[sk.cdKey + 'Max'] ?? 6;
+    return true;
+  }
+
+  /** 检查是否可以施放技能 */
+  canCastSkill(owner, id) {
+    const sk = SKILLS[id];
+    if (!sk || owner.dead) return false;
+    return owner[sk.cdKey] <= 0;
+  }
+
+  /** 提交技能施放 */
+  commitCastSkill(owner, id, dir) {
     const sk = SKILLS[id];
     if (!sk || owner.dead) return false;
     if (owner[sk.cdKey] > 0) return false;

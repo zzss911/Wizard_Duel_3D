@@ -572,9 +572,13 @@ export class Game {
     if (this.input.isAttackHeld() && canAct) {
       const cp = Math.cos(this.cameraPitch), sp = Math.sin(this.cameraPitch);
       this._aimDir.set(-Math.sin(this.cameraYaw) * cp, -sp * 0.6, -Math.cos(this.cameraYaw) * cp).normalize();
-      if (this.combat.tryFire(this.player, this._aimDir)) {
-        this.player.onCast();
-        this.audio.playCast(2);
+      if (this.combat.canFire(this.player)) {
+        const dir = this._aimDir.clone();
+        this.player.requestCast(() => {
+          if (this.combat.commitFire(this.player, dir)) {
+            this.audio.playCast(2);
+          }
+        });
       }
     }
 
@@ -588,18 +592,26 @@ export class Game {
     if (this.input.consumeAction('skill1') && canAct) {
       const cp2 = Math.cos(this.cameraPitch), sp2 = Math.sin(this.cameraPitch);
       this._aimDir.set(-Math.sin(this.cameraYaw) * cp2, -sp2 * 0.6, -Math.cos(this.cameraYaw) * cp2).normalize();
-      if (this.combat.castSkill(this.player, 1, this._aimDir)) {
-        this.player.onCast();
-        this.audio.playCast(4);
+      if (this.combat.canCastSkill(this.player, 1)) {
+        const dir = this._aimDir.clone();
+        this.player.requestCast(() => {
+          if (this.combat.commitCastSkill(this.player, 1, dir)) {
+            this.audio.playCast(4);
+          }
+        });
       }
     }
 
     if (this.input.consumeAction('skill2') && canAct) {
       const cp3 = Math.cos(this.cameraPitch), sp3 = Math.sin(this.cameraPitch);
       this._aimDir.set(-Math.sin(this.cameraYaw) * cp3, -sp3 * 0.6, -Math.cos(this.cameraYaw) * cp3).normalize();
-      if (this.combat.castSkill(this.player, 2, this._aimDir)) {
-        this.player.onCast();
-        this.audio.playCast(3);
+      if (this.combat.canCastSkill(this.player, 2)) {
+        const dir = this._aimDir.clone();
+        this.player.requestCast(() => {
+          if (this.combat.commitCastSkill(this.player, 2, dir)) {
+            this.audio.playCast(3);
+          }
+        });
       }
     }
 
@@ -726,9 +738,13 @@ export class Game {
       if (this.input.isAttackHeld()) {
         const cp = Math.cos(this.cameraPitch), sp = Math.sin(this.cameraPitch);
         this._aimDir.set(-Math.sin(this.cameraYaw) * cp, -sp * 0.6, -Math.cos(this.cameraYaw) * cp).normalize();
-        if (this.combat.tryFire(this.player, this._aimDir)) {
-          this.player.onCast();
-          this.audio.playCast(2);
+        if (this.combat.canFire(this.player)) {
+          const dir = this._aimDir.clone();
+          this.player.requestCast(() => {
+            if (this.combat.commitFire(this.player, dir)) {
+              this.audio.playCast(2);
+            }
+          });
         }
       }
 
@@ -744,9 +760,13 @@ export class Game {
       if (this.input.consumeAction('skill1')) {
         const cp2 = Math.cos(this.cameraPitch), sp2 = Math.sin(this.cameraPitch);
         this._aimDir.set(-Math.sin(this.cameraYaw) * cp2, -sp2 * 0.6, -Math.cos(this.cameraYaw) * cp2).normalize();
-        if (this.combat.castSkill(this.player, 1, this._aimDir)) {
-          this.player.onCast();
-          this.audio.playCast(4);
+        if (this.combat.canCastSkill(this.player, 1)) {
+          const dir = this._aimDir.clone();
+          this.player.requestCast(() => {
+            if (this.combat.commitCastSkill(this.player, 1, dir)) {
+              this.audio.playCast(4);
+            }
+          });
         }
       }
 
@@ -754,9 +774,13 @@ export class Game {
       if (this.input.consumeAction('skill2')) {
         const cp3 = Math.cos(this.cameraPitch), sp3 = Math.sin(this.cameraPitch);
         this._aimDir.set(-Math.sin(this.cameraYaw) * cp3, -sp3 * 0.6, -Math.cos(this.cameraYaw) * cp3).normalize();
-        if (this.combat.castSkill(this.player, 2, this._aimDir)) {
-          this.player.onCast();
-          this.audio.playCast(3);
+        if (this.combat.canCastSkill(this.player, 2)) {
+          const dir = this._aimDir.clone();
+          this.player.requestCast(() => {
+            if (this.combat.commitCastSkill(this.player, 2, dir)) {
+              this.audio.playCast(3);
+            }
+          });
         }
       }
     } else {
