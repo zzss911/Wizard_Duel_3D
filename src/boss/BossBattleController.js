@@ -300,7 +300,7 @@ export class BossBattleController {
 
   /** Called when AI enters TELEGRAPH for a skill */
   _onSkillTelegraph(skillId) {
-    const isDangerous = (skillId === 'DEATH_CAGE');
+    const isDangerous = (skillId === 'death_cage');
     this.cinematicUI.showSkillName(skillId, isDangerous);
   }
 
@@ -357,7 +357,7 @@ export class BossBattleController {
       this.cameraDirector.startCinematic(this._camera, CINEMATIC.DEATH, {
         bossPos: this.boss.position.clone(),
         playerPos: this.player.position.clone(),
-        duration: 3.5,
+        duration: 4.0,
       });
     }
   }

@@ -695,10 +695,15 @@ export class Game {
     this.arena.update(dt);
     this.props.update(dt);
 
-    // 摄像机：cinematic 期间由 CameraDirector 控制，否则正常更新
+    // 摄像机：cinematic 期间由 CameraDirector 控制 + shake 叠加，否则正常更新
     const cinematicActive = this.bossController.cameraDirector.update(dt);
     if (!cinematicActive) {
       this.updateCamera(dt);
+    } else {
+      // Cinematic mode: CameraDirector already set camera.position,
+      // but we still need to apply shake on top
+      this.shake.update(dt, this._shakeOffset);
+      this.camera.position.add(this._shakeOffset);
     }
 
     // HUD：只显示玩家血条和技能冷却

@@ -12,10 +12,10 @@
  */
 
 const SKILL_NAMES = {
-  CHAIN: { zh: '锁链禁锢', en: 'CHAIN' },
-  MAGIC_BOLT: { zh: '重型魔法弹', en: 'MAGIC BOLT' },
-  QUAKE: { zh: '典狱震荡', en: 'QUAKE' },
-  DEATH_CAGE: { zh: '死亡牢笼', en: 'DEATH CAGE' },
+  chain: { zh: '锁链禁锢', en: 'CHAIN' },
+  magic_bolt: { zh: '重型魔法弹', en: 'MAGIC BOLT' },
+  quake: { zh: '典狱震荡', en: 'QUAKE' },
+  death_cage: { zh: '死亡牢笼', en: 'DEATH CAGE' },
 };
 
 export class BossCinematicUI {
