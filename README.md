@@ -1,6 +1,6 @@
 # 魔法战斗 · Wizard Duel 3D
 
-> Demo / Preview Build — v0.1.0
+> Demo / Preview Build — v0.2.0
 
 一个基于 Three.js + WebGL 的 3D 魔法决斗游戏。在竞技场中与 AI 法师对战，或挑战强大的 Boss 典狱长。
 
@@ -18,6 +18,7 @@
 - **画质设置** — 低 / 中 / 高三档，含粒子缩放、Bloom、阴影控制
 - **程序化音效** — Web Audio API 合成，无外部音频文件
 - **程序化 BGM** — 菜单 / 决斗 / Boss 三种氛围，Boss Phase II 升级
+- **玩家角色模型** — v0.2.0 程序化骨骼绑定角色（20 骨骼 + 24 mesh），6 种动画（Idle/Run/Cast/Dodge/Hit/Death），优先级系统 + one-shot + impact frame 同步，旧 WizardModel 作为 fallback
 
 ## 操作
 
