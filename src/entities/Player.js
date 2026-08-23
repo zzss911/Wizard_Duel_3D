@@ -5,6 +5,13 @@ import { buildWizard, PLAYER_PALETTE } from './WizardModel.js';
 
 let _glbLoadPromise = null;
 
+// Priority for cast preemption (higher can interrupt lower)
+const CAST_TYPE_PRIORITY = {
+  basic: 50,
+  q: 65,
+  e: 60,
+};
+
 async function _loadPlayerGLB() {
   if (_glbLoadPromise) return _glbLoadPromise;
   _glbLoadPromise = (async () => {
@@ -72,6 +79,7 @@ export class Player {
     // ---- Cast impact sync (v0.3.0) ----
     this._castGeneration = 0;
     this._pendingCast = null; // { type, callback, token, fired }
+    this._castInProgress = false; // Cast lock: prevents re-entry during cast windup
 
     // ---- Cast anchor bone reference ----
     this._castBoneAnchor = null; // THREE.Object3D attached to Hand_R bone
@@ -301,17 +309,27 @@ export class Player {
 
   /**
    * 施法请求 — v0.3.0: Type-aware cast with token-based pending management.
+   * v0.3.0-P1: Cast lock prevents re-entry during windup. Priority preemption
+   *            allows Q/E to interrupt basic, but not vice versa.
    *
    * @param {string} castType - 'basic' | 'q' | 'e'
    * @param {function} impactCallback - called at impact frame
+   * @returns {boolean} true if cast started, false if blocked by lock
    */
   requestCast(castType, impactCallback) {
-    this._castGlow = 1;
-
-    // Cancel any existing pending cast (new cast supersedes old)
-    if (this._pendingCast && !this._pendingCast.fired) {
-      this._pendingCast.fired = true;
+    // Cast lock: check preemption rules
+    if (this._castInProgress) {
+      const newPri = CAST_TYPE_PRIORITY[castType] || 0;
+      const curType = this._pendingCast ? this._pendingCast.type : null;
+      const curPri = curType ? (CAST_TYPE_PRIORITY[curType] || 0) : 0;
+      // Higher priority can preempt lower; equal or lower cannot
+      if (newPri <= curPri) return false;
+      // Preempt: cancel current pending before starting new
+      this.cancelPendingCast();
     }
+
+    this._castGlow = 1;
+    this._castInProgress = true;
 
     const token = ++this._castGeneration;
     this._pendingCast = {
@@ -322,40 +340,44 @@ export class Player {
     };
 
     if (this.animController && !this._usingFallback) {
-      // Map cast type to animation name
       const animName = castType === 'basic' ? 'CastBasic'
         : castType === 'q' ? 'CastQ'
         : castType === 'e' ? 'CastE'
         : 'CastBasic';
 
-      // Wrap callback with token check to prevent stale execution
       const wrappedCallback = () => {
-        if (token !== this._castGeneration) return; // Stale
-        if (this._pendingCast && this._pendingCast.fired) return; // Already fired
+        if (token !== this._castGeneration) return;
+        if (this._pendingCast && this._pendingCast.fired) return;
         if (this._pendingCast) this._pendingCast.fired = true;
+        this._castInProgress = false;
         impactCallback();
       };
 
       const returnedToken = this.animController.playOneShot(animName, wrappedCallback, 0.08);
 
-      // If playOneShot returned -1 (clip not available), fire immediately
       if (returnedToken === -1) {
+        // Clip not available — fire immediately and release lock
         if (this._pendingCast) this._pendingCast.fired = true;
+        this._castInProgress = false;
         impactCallback();
       }
     } else {
-      // Fallback: 立即触发
+      // Fallback: 立即触发, release lock
       if (this._pendingCast) this._pendingCast.fired = true;
+      this._castInProgress = false;
       if (impactCallback) impactCallback();
     }
+
+    return true;
   }
 
-  /** Cancel any pending cast — called on Death, Dodge, reset */
+  /** Cancel any pending cast — called on Death, Dodge, reset, preemption */
   cancelPendingCast() {
     if (this._pendingCast && !this._pendingCast.fired) {
       this._pendingCast.fired = true;
     }
     this._pendingCast = null;
+    this._castInProgress = false;
     if (this.animController) {
       this.animController.cancelPendingImpact();
     }

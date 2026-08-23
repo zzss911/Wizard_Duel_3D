@@ -572,7 +572,7 @@ export class Game {
     if (this.input.isAttackHeld() && canAct) {
       const cp = Math.cos(this.cameraPitch), sp = Math.sin(this.cameraPitch);
       this._aimDir.set(-Math.sin(this.cameraYaw) * cp, -sp * 0.6, -Math.cos(this.cameraYaw) * cp).normalize();
-      if (this.combat.canFire(this.player)) {
+      if (this.combat.canFire(this.player) && !this.player._castInProgress) {
         const dir = this._aimDir.clone();
         this.player.requestCast('basic', () => {
           if (this.combat.commitFire(this.player, dir)) {
@@ -738,7 +738,7 @@ export class Game {
       if (this.input.isAttackHeld()) {
         const cp = Math.cos(this.cameraPitch), sp = Math.sin(this.cameraPitch);
         this._aimDir.set(-Math.sin(this.cameraYaw) * cp, -sp * 0.6, -Math.cos(this.cameraYaw) * cp).normalize();
-        if (this.combat.canFire(this.player)) {
+        if (this.combat.canFire(this.player) && !this.player._castInProgress) {
           const dir = this._aimDir.clone();
           this.player.requestCast('basic', () => {
             if (this.combat.commitFire(this.player, dir)) {
