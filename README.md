@@ -18,7 +18,7 @@
 - **画质设置** — 低 / 中 / 高三档，含粒子缩放、Bloom、阴影控制
 - **程序化音效** — Web Audio API 合成，无外部音频文件
 - **程序化 BGM** — 菜单 / 决斗 / Boss 三种氛围，Boss Phase II 升级
-- **玩家角色模型** — v0.3.0 骨骼动画角色（GLB 17 骨骼），8 种动画（Idle/Run/CastBasic/CastQ/CastE/Dodge/Hit/Death），AnimationMixer + impact frame 同步，cast 优先级抢占系统，Hand_R 杖尖弹道锚点，程序化模型作为 fallback
+- **玩家角色模型** — v0.3.0 骨骼动画角色（GLB 17 骨骼），8 种动画（Idle/Run/CastBasic/CastQ/CastE/Dodge/Hit/Death），AnimationMixer + impact frame 同步，cast 优先级抢占系统（Q>E>basic+Dodge/Death 可打断），Hand_R 杖尖弹道锚点，程序化模型 fallback
 
 ## 操作
 
