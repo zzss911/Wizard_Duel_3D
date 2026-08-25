@@ -383,6 +383,11 @@ export class Player {
     }
   }
 
+  /** Public API: whether a cast is currently in progress (windup phase). */
+  isCasting() {
+    return this._castInProgress;
+  }
+
   /** 旧接口兼容 — 不带 impact sync */
   onCast() {
     this._castGlow = 1;
