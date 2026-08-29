@@ -923,9 +923,8 @@ export class Game {
 
     const ok = this.bossController.start(this.player, this.arena, this.selectedBossId);
     if (!ok) {
-      // Boss 创建失败 — 不进入战斗，回退到 Boss 选择
-      this.bossController.destroy();
-      this.bossController = null;
+      // Boss 创建失败 — 完整退出 Boss 战状态再回选择页
+      this._exitBossBattle();
       this._enterBossSelect();
       return;
     }

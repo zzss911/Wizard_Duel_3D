@@ -182,6 +182,7 @@ export class BossCinematicUI {
 
   // ---- Clear all ----
   clear() {
+    if (!this._container) return;
     if (this._skillEl) { this._skillEl.remove(); this._skillEl = null; }
     if (this._skillTimer) { clearTimeout(this._skillTimer); this._skillTimer = null; }
     const overlays = this._container.querySelectorAll('.boss-cinematic-title, .boss-cinematic-fight, .boss-cinematic-phase2, .boss-cinematic-defeated');

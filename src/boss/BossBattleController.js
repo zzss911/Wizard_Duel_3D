@@ -81,19 +81,28 @@ export class BossBattleController {
     this._registryEntry = resolvedEntry;
     this._cinematicConfig = resolvedEntry.cinematicConfig;
 
-    // ---- 创建 Boss（不做内部 fallback） ----
-    const boss = BossRegistry.createBoss(this.bossId, this.scene);
-    if (!boss) {
-      console.error(`[BossBattleController] createBoss returned null for "${this.bossId}"`);
-      return false;
-    }
+    // ---- 创建 Boss + AI（try/catch + candidate cleanup） ----
+    let boss = null;
+    let ai = null;
 
-    // ---- 创建 AI（不做内部 fallback） ----
-    const ai = BossRegistry.createAI(
-      this.bossId, boss, this.combat, this.scene, this.effects, this.explosion
-    );
-    if (!ai) {
-      console.error(`[BossBattleController] createAI returned null for "${this.bossId}"`);
+    try {
+      boss = BossRegistry.createBoss(this.bossId, this.scene);
+      if (!boss) {
+        console.error(`[BossBattleController] createBoss returned null for "${this.bossId}"`);
+        return false;
+      }
+
+      ai = BossRegistry.createAI(
+        this.bossId, boss, this.combat, this.scene, this.effects, this.explosion
+      );
+      if (!ai) {
+        console.error(`[BossBattleController] createAI returned null for "${this.bossId}"`);
+        this._cleanupBossCandidate(boss);
+        return false;
+      }
+    } catch (err) {
+      console.error(`[BossBattleController] Exception during boss/AI creation for "${this.bossId}":`, err);
+      if (boss) this._cleanupBossCandidate(boss);
       return false;
     }
 
@@ -135,6 +144,23 @@ export class BossBattleController {
     }
 
     return true;
+  }
+
+  /**
+   * Clean up a Boss candidate that was created but never assigned to this.boss.
+   * Uses boss.destroy?.() if available, otherwise removes known scene objects.
+   * @param {object} boss - the orphaned Boss instance
+   */
+  _cleanupBossCandidate(boss) {
+    if (!boss) return;
+    if (typeof boss.destroy === 'function') {
+      boss.destroy();
+      return;
+    }
+    // Fallback: remove known scene objects directly
+    if (boss.group) this.scene.remove(boss.group);
+    if (boss.fog) this.scene.remove(boss.fog);
+    if (boss.groundRune) this.scene.remove(boss.groundRune);
   }
 
   /** Set camera reference for cinematic sequences */
@@ -593,9 +619,7 @@ export class BossBattleController {
       if (this.ai._clearQuakeWave) this.ai._clearQuakeWave();
     }
     if (this.boss) {
-      this.scene.remove(this.boss.group);
-      if (this.boss.fog) this.scene.remove(this.boss.fog);
-      if (this.boss.groundRune) this.scene.remove(this.boss.groundRune);
+      this.boss.destroy?.();
       this.boss = null;
     }
     this.ai = null;

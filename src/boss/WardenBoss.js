@@ -142,6 +142,7 @@ export class WardenBoss {
     this._modelLoading = false;
     this._usingFallback = false;
     this._modelHeight = 3.0; // Will be updated from bounding box
+    this._destroyed = false;
 
     // Materials for effects (shared between GLB and fallback)
     this._initMaterials();
@@ -186,6 +187,7 @@ export class WardenBoss {
 
     loadWardenGLB()
       .then((result) => {
+        if (this._destroyed) return;
         this._setupGLBModel(result.scene, result.animations);
         this._hasAnims = result.hasAnims;
         if (this._hasAnims) {
@@ -195,6 +197,7 @@ export class WardenBoss {
         this._modelLoading = false;
       })
       .catch((err) => {
+        if (this._destroyed) return;
         console.warn('[WardenBoss] GLB load failed, using procedural fallback:', err);
         this._buildFallbackMesh();
         this._usingFallback = true;
@@ -910,6 +913,33 @@ export class WardenBoss {
       this._oneShotFired = false;
       this._bossState = 'IDLE';
       this._playAnimInternal('Idle', 0.1, true);
+    }
+  }
+
+  /**
+   * Remove all scene objects created by this Boss.
+   * Safe to call after async GLB load — sets _destroyed guard
+   * so the pending Promise will not add objects back.
+   * Idempotent: calling twice is a no-op.
+   */
+  destroy() {
+    if (this._destroyed) return;
+    this._destroyed = true;
+
+    if (this._mixer) {
+      this._mixer.stopAllAction();
+      this._mixer.uncacheRoot(this._mixer.getRoot());
+      this._mixer = null;
+    }
+
+    if (this.group) {
+      this.scene.remove(this.group);
+    }
+    if (this.fog) {
+      this.scene.remove(this.fog);
+    }
+    if (this.groundRune) {
+      this.scene.remove(this.groundRune);
     }
   }
 }
