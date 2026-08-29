@@ -148,54 +148,72 @@ export const BossRegistry = {
   },
 
   /**
-   * 获取第一个已注册 Boss 的 ID（默认选择）
-   * @returns {string}
+   * 获取第一个 available Boss 的 ID。
+   * available = factory + aiFactory 均为 function。
+   * @returns {string|null} — null 表示没有任何 available boss
    */
   getDefaultId() {
-    return Object.keys(_registry)[0];
+    for (const entry of Object.values(_registry)) {
+      if (this.isAvailable(entry.id)) return entry.id;
+    }
+    return null;
   },
 
   /**
-   * 创建 Boss 实例
+   * 判断某个 Boss 是否可用。
+   * 最低标准：factory + aiFactory 均为 function。
+   * @param {string} id
+   * @returns {boolean}
+   */
+  isAvailable(id) {
+    const entry = _registry[id];
+    return !!(
+      entry &&
+      typeof entry.factory === 'function' &&
+      typeof entry.aiFactory === 'function'
+    );
+  },
+
+  /**
+   * 原子化解析：如果 requested id 可用则返回它，
+   * 否则完整 fallback 到第一个 available boss。
+   * @param {string} id
+   * @returns {object|null} — null 表示没有任何 available boss
+   */
+  resolveAvailable(id) {
+    const entry = this.get(id);
+    if (entry && this.isAvailable(id)) return entry;
+    const defaultId = this.getDefaultId();
+    return defaultId ? this.get(defaultId) : null;
+  },
+
+  /**
+   * 创建 Boss 实例。
+   * 不做内部 fallback — factory 缺失时返回 null。
    * @param {string} id
    * @param {THREE.Scene} scene
-   * @returns {object} boss instance
+   * @returns {object|null}
    */
   createBoss(id, scene) {
     const entry = _registry[id];
-    if (!entry || !entry.factory) {
-      console.warn(`[BossRegistry] Boss "${id}" has no factory, falling back to warden`);
-      return new WardenBoss(scene);
-    }
+    if (!entry || typeof entry.factory !== 'function') return null;
     return entry.factory(scene);
   },
 
   /**
-   * 创建 AI 实例
+   * 创建 AI 实例。
+   * 不做内部 fallback — aiFactory 缺失时返回 null。
    * @param {string} id
    * @param {object} boss
    * @param {object} combat
    * @param {THREE.Scene} scene
    * @param {object} effects
    * @param {object} explosion
-   * @returns {object} AI instance
+   * @returns {object|null}
    */
   createAI(id, boss, combat, scene, effects, explosion) {
     const entry = _registry[id];
-    if (!entry || !entry.aiFactory) {
-      console.warn(`[BossRegistry] Boss "${id}" has no aiFactory, falling back to WardenAI`);
-      return new WardenAI(boss, combat, scene, effects, explosion);
-    }
+    if (!entry || typeof entry.aiFactory !== 'function') return null;
     return entry.aiFactory(boss, combat, scene, effects, explosion);
-  },
-
-  /**
-   * 判断某个 Boss 是否可用（有 factory）
-   * @param {string} id
-   * @returns {boolean}
-   */
-  isAvailable(id) {
-    const entry = _registry[id];
-    return !!(entry && entry.factory);
   },
 };

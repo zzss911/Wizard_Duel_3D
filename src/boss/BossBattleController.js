@@ -62,39 +62,57 @@ export class BossBattleController {
   }
 
   start(player, arena, bossId = 'warden') {
+    // ---- 原子化解析 ----
+    const resolvedEntry = BossRegistry.resolveAvailable(bossId);
+    if (!resolvedEntry) {
+      console.error(`[BossBattleController] No available boss (requested "${bossId}")`);
+      return false;
+    }
+    if (resolvedEntry.id !== bossId) {
+      console.warn(
+        `[BossBattleController] Boss "${bossId}" unavailable; ` +
+        `falling back to "${resolvedEntry.id}"`
+      );
+    }
+
     this.player = player;
     this.arena = arena;
-    this.bossId = bossId;
+    this.bossId = resolvedEntry.id;
+    this._registryEntry = resolvedEntry;
+    this._cinematicConfig = resolvedEntry.cinematicConfig;
 
-    // 从 Registry 获取配置
-    this._registryEntry = BossRegistry.get(bossId);
-    if (!this._registryEntry) {
-      console.warn(`[BossBattleController] Unknown bossId "${bossId}", falling back to warden`);
-      this._registryEntry = BossRegistry.get('warden');
-      this.bossId = 'warden';
+    // ---- 创建 Boss（不做内部 fallback） ----
+    const boss = BossRegistry.createBoss(this.bossId, this.scene);
+    if (!boss) {
+      console.error(`[BossBattleController] createBoss returned null for "${this.bossId}"`);
+      return false;
     }
-    this._cinematicConfig = this._registryEntry.cinematicConfig;
 
-    // 设置 Cinematic UI 的技能名称映射
+    // ---- 创建 AI（不做内部 fallback） ----
+    const ai = BossRegistry.createAI(
+      this.bossId, boss, this.combat, this.scene, this.effects, this.explosion
+    );
+    if (!ai) {
+      console.error(`[BossBattleController] createAI returned null for "${this.bossId}"`);
+      return false;
+    }
+
+    // ---- 创建成功，安全赋值 ----
+    this.boss = boss;
+    this.ai = ai;
+    this.ai.audio = this.audio;
+    this.ai.hud = this.hud;
+    this.ai.onShake = (power) => this.onShake?.(power);
+    this.ai.onSkillTelegraph = (skillId) => this._onSkillTelegraph(skillId);
+
+    // 设置 Cinematic UI 的技能名称映射（创建成功后才设置）
     this.cinematicUI.setSkillNames(
       this._cinematicConfig.skillNames,
       this._cinematicConfig.dangerousSkills
     );
 
-    // 创建 Boss
-    if (!this.boss) {
-      this.boss = BossRegistry.createBoss(this.bossId, this.scene);
-    }
     this.boss.reset();
     this.boss.hide();
-
-    if (!this.ai) {
-      this.ai = BossRegistry.createAI(this.bossId, this.boss, this.combat, this.scene, this.effects, this.explosion);
-      this.ai.audio = this.audio;
-      this.ai.hud = this.hud;
-      this.ai.onShake = (power) => this.onShake?.(power);
-      this.ai.onSkillTelegraph = (skillId) => this._onSkillTelegraph(skillId);
-    }
     this.ai.reset();
 
     // 设置 Boss 死亡回调
@@ -115,6 +133,8 @@ export class BossBattleController {
       this.timer = 0;
       this._showLoadingText();
     }
+
+    return true;
   }
 
   /** Set camera reference for cinematic sequences */
