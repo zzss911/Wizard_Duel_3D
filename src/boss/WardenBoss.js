@@ -812,6 +812,17 @@ export class WardenBoss {
       }
     }
     if (this.hp <= 0) {
+      // 清除战斗临时材质覆盖（slow purple / hit flash），不冻结到 Death cinematic
+      this._slowT = 0;
+      this.speedMult = 1;
+      this._flash = 0;
+      for (const mat of this._flashMaterials) {
+        if (mat.emissive && mat._origEmissive !== undefined) {
+          mat.emissive.setHex(mat._origEmissive);
+          mat.emissiveIntensity = mat._origEmissiveIntensity;
+        }
+      }
+
       this.dead = true;
       this._deathT = 0;
       this.setBossState('DEAD');
