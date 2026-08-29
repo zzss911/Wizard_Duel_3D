@@ -54,6 +54,9 @@ export class VoidWitchAI {
     this._moveTimer = 0;
     this._moveDuration = 0;
 
+    // Scratch vector (avoid per-frame allocation)
+    this._tmpToPlayer = new THREE.Vector3();
+
     // Set boss initial state
     boss.setBossState('IDLE');
   }
@@ -100,7 +103,7 @@ export class VoidWitchAI {
       case AI_STATE.MOVE: {
         b.faceTowards(player.position, dt);
 
-        const toPlayer = new THREE.Vector3()
+        const toPlayer = this._tmpToPlayer
           .subVectors(player.position, b.position)
           .setY(0);
         const dist = toPlayer.length();

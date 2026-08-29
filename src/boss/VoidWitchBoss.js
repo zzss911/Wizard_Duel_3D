@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/GLTFLoader.js';
+import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 
 /**
  * VoidWitchBoss —— 虚空女巫 Boss
@@ -9,11 +10,21 @@ import { GLTFLoader } from 'three/addons/GLTFLoader.js';
  *
  * GLB 尝试加载 → 失败 → procedural fallback。
  * Loader cache 与 Warden 独立，只一次受控 console.warn。
+ *
+ * GLB ownership:
+ *   - Module caches the GLB *source* asset (scene + animations).
+ *   - Each VoidWitchBoss instance gets its own scene clone via
+ *     SkeletonUtils.clone() — never shares the same Object3D.
+ *   - Materials are per-instance (cloned after skeletonClone so each
+ *     boss can independently modify emissive).
+ *   - Geometry is shared (source-owned) and NOT disposed by instances.
+ *   - Procedural fallback meshes own their geometry + material.
  */
 
 // ---- Module-level GLB loader cache (independent from Warden) ----
 let _vwLoader = null;
 let _vwLoadPromise = null;
+let _vwLoadWarned = false;
 
 function loadVoidWitchGLB() {
   if (_vwLoadPromise) return _vwLoadPromise;
@@ -122,14 +133,19 @@ export class VoidWitchBoss {
     loadVoidWitchGLB()
       .then((result) => {
         if (this._destroyed) return;
-        this._setupGLBModel(result.scene, result.animations);
+        // Clone the cached source scene so each instance owns its own Object3D.
+        const instanceScene = skeletonClone(result.scene);
+        this._setupGLBModel(instanceScene, result.animations);
         this._modelLoaded = true;
         this._modelLoading = false;
       })
       .catch(() => {
         if (this._destroyed) return;
-        // Only one controlled warn — Promise is cached so this only fires once
-        console.warn('[VoidWitchBoss] void_witch_rigged.glb not found, using procedural fallback');
+        // Warn at most once across all instances
+        if (!_vwLoadWarned) {
+          _vwLoadWarned = true;
+          console.warn('[VoidWitchBoss] void_witch_rigged.glb not found, using procedural fallback');
+        }
         this._buildFallbackMesh();
         this._modelLoaded = true;
         this._modelLoading = false;
@@ -148,23 +164,41 @@ export class VoidWitchBoss {
     const size2 = box2.getSize(new THREE.Vector3());
     this._modelHeight = size2.y;
 
-    // Enable shadows and collect flash materials
+    // Enable shadows, clone materials per-instance so each boss can
+    // independently modify emissive.
     gltfScene.traverse((child) => {
       if (child.isMesh) {
         child.castShadow = true;
         child.receiveShadow = true;
-        if (child.material && !this._flashMaterials.includes(child.material)) {
-          this._flashMaterials.push(child.material);
-          if (child.material.emissive) {
-            child.material._origEmissive = child.material.emissive.getHex();
-            child.material._origEmissiveIntensity = child.material.emissiveIntensity || 0;
+
+        // Clone material(s) — geometry stays shared (source-owned)
+        if (Array.isArray(child.material)) {
+          child.material = child.material.map(m => {
+            const cloned = m.clone();
+            if (cloned.emissive) {
+              cloned._origEmissive = cloned.emissive.getHex();
+              cloned._origEmissiveIntensity = cloned.emissiveIntensity || 0;
+            }
+            return cloned;
+          });
+        } else {
+          const cloned = child.material.clone();
+          if (cloned.emissive) {
+            cloned._origEmissive = cloned.emissive.getHex();
+            cloned._origEmissiveIntensity = cloned.emissiveIntensity || 0;
           }
+          child.material = cloned;
+        }
+
+        if (!this._flashMaterials.includes(child.material)) {
+          this._flashMaterials.push(child.material);
         }
       }
     });
 
-    this.visualRoot.add(gltfScene);
+    this._usingGLB = true;
     this._gltfScene = gltfScene;
+    this.visualRoot.add(gltfScene);
 
     // Add Void Witch specific effects
     this._addVoidCore();
@@ -482,6 +516,7 @@ export class VoidWitchBoss {
     if (this.hp <= 0) {
       // Clear temporary visual states
       this._slowT = 0;
+      this._hitFlashT = 0;
       this.speedMult = 1;
       this._flash = 0;
       for (const mat of this._flashMaterials) {
