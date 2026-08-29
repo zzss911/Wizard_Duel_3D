@@ -48,10 +48,32 @@ export class HUD {
 
     this._bannerTimer = null;
     this._v = new THREE.Vector3();
+
+    // ---- 伤害飘字对象池 ----
+    this._dmgPoolSize = 12;
+    this._dmgPool = [];
+    this._dmgIdx = 0;
+    for (let i = 0; i < this._dmgPoolSize; i++) {
+      const el = document.createElement('div');
+      el.className = 'dmg-num';
+      el.style.display = 'none';
+      this.damageLayer.appendChild(el);
+      this._dmgPool.push({ el, active: false, life: 0, maxLife: 0.75 });
+    }
   }
 
   update(player, target, enemy) {
-    this.playerFill.style.width = (player.hp / player.maxHp * 100) + '%';
+    const playerHpPct = player.hp / player.maxHp;
+    this.playerFill.style.width = (playerHpPct * 100) + '%';
+    this.playerFill.classList.toggle('critical', playerHpPct > 0 && playerHpPct < 0.3);
+
+    // 低血量持续红边晕影
+    if (playerHpPct > 0 && playerHpPct < 0.3) {
+      this.vignette.classList.add('sustained');
+    } else {
+      this.vignette.classList.remove('sustained');
+    }
+
     this.targetFill.style.width = (target.hp / target.maxHp * 100) + '%';
     if (this.enemyFill && enemy) {
       this.enemyFill.style.width = (enemy.hp / enemy.maxHp * 100) + '%';
@@ -73,19 +95,40 @@ export class HUD {
     }
   }
 
-  spawnDamageNumber(worldPos, amount, camera) {
+  spawnDamageNumber(worldPos, amount, camera, skillType = 'basic') {
     this._v.copy(worldPos).project(camera);
     if (this._v.z > 1) return;
     const x = (this._v.x * 0.5 + 0.5) * window.innerWidth;
     const y = (-this._v.y * 0.5 + 0.5) * window.innerHeight;
 
-    const el = document.createElement('div');
-    el.className = 'dmg-num';
+    const slot = this._dmgPool[this._dmgIdx];
+    this._dmgIdx = (this._dmgIdx + 1) % this._dmgPoolSize;
+
+    const el = slot.el;
+    el.className = 'dmg-num dmg-' + skillType;
     el.textContent = '-' + amount;
     el.style.left = x + 'px';
     el.style.top = y + 'px';
-    this.damageLayer.appendChild(el);
-    setTimeout(() => el.remove(), 750);
+    el.style.display = '';
+    el.style.animation = 'none';
+    void el.offsetWidth;
+    el.style.animation = 'dmg-float 0.75s ease-out forwards';
+
+    slot.active = true;
+    slot.life = 0;
+    slot.maxLife = 0.75;
+  }
+
+  /** 每帧调用，回收过期的飘字 */
+  updateDmgNumbers(dt) {
+    for (const slot of this._dmgPool) {
+      if (!slot.active) continue;
+      slot.life += dt;
+      if (slot.life >= slot.maxLife) {
+        slot.active = false;
+        slot.el.style.display = 'none';
+      }
+    }
   }
 
   screenFlash() {
@@ -97,9 +140,10 @@ export class HUD {
 
   playerHitFlash() {
     if (!this.vignette) return;
-    this.vignette.classList.remove('active');
+    this.vignette.classList.remove('active', 'sustained');
     void this.vignette.offsetWidth;
     this.vignette.classList.add('active');
+    // sustained 状态会在下一帧 HUD.update 中根据血量自动恢复
   }
 
   showBanner(text, seconds = 1.5) {

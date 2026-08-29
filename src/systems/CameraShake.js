@@ -23,6 +23,17 @@ export class CameraShake {
    * @param {boolean} isMobile 移动端幅度降低 30%
    */
   trigger(power = 1, isMobile = false) {
+    // 堆叠保护：正在震动时，新 power 低于当前剩余峰值则忽略
+    if (this.active) {
+      const elapsed = this.time;
+      const remainingMax = this.pulses.reduce((mx, p) => {
+        if (elapsed < p.t + p.len) return Math.max(mx, p.amp * (1 - (elapsed - p.t) / p.len));
+        return mx;
+      }, 0);
+      const newAmp = 0.30 * (isMobile ? 0.7 : 1) * power;
+      if (newAmp < remainingMax * 0.8) return;
+    }
+
     const m = (isMobile ? 0.7 : 1) * power;
     this.pulses = [
       { t: 0.0, amp: 0.30 * m, len: 0.22 },

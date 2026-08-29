@@ -51,6 +51,39 @@ export class Enemy {
     this.bodyMat = robeMat;
     this.group.position.copy(this.position);
     this.scene.add(this.group);
+
+    // ---- 束缚咒减速状态：脚下符文环 ----
+    const runeCanvas = document.createElement('canvas');
+    runeCanvas.width = 128; runeCanvas.height = 128;
+    const rctx = runeCanvas.getContext('2d');
+    rctx.strokeStyle = 'rgba(180, 106, 255, 0.9)';
+    rctx.lineWidth = 3;
+    rctx.beginPath();
+    rctx.arc(64, 64, 50, 0, Math.PI * 2);
+    rctx.stroke();
+    rctx.lineWidth = 2;
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      rctx.beginPath();
+      rctx.moveTo(64 + Math.cos(a) * 30, 64 + Math.sin(a) * 30);
+      rctx.lineTo(64 + Math.cos(a) * 45, 64 + Math.sin(a) * 45);
+      rctx.stroke();
+    }
+    const runeTex = new THREE.CanvasTexture(runeCanvas);
+    runeTex.needsUpdate = true;
+
+    this.slowRune = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: runeTex,
+      color: 0xb46aff,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    }));
+    this.slowRune.scale.set(2.0, 2.0, 1);
+    this.slowRune.position.y = 0.05;
+    this.slowRune.visible = false;
+    this.scene.add(this.slowRune);
   }
 
   get headPosition() {
@@ -104,10 +137,19 @@ export class Enemy {
         this.speedMult = 1;
         this.bodyMat.emissive.setHex(0x000000);
         this.bodyMat.emissiveIntensity = 0;
+        this.slowRune.visible = false;
+        this.slowRune.material.opacity = 0;
       } else if (this._flash <= 0) {
         this.bodyMat.emissive.setHex(0x8a4adf);
         this.bodyMat.emissiveIntensity = 0.5 + Math.sin(this._slowT * 12) * 0.2;
       }
+      // 符文环跟随 + 旋转 + 脉冲
+      this.slowRune.visible = true;
+      this.slowRune.position.set(this.position.x, 0.05, this.position.z);
+      this.slowRune.material.opacity = 0.5 + Math.sin(this._slowT * 8) * 0.2;
+      this.slowRune.material.rotation += dt * 1.5;
+      const rs = 1.8 + Math.sin(this._slowT * 6) * 0.15;
+      this.slowRune.scale.set(rs, rs, 1);
     }
 
     if (this._flash > 0) {
@@ -177,5 +219,7 @@ export class Enemy {
     this.position.copy(this.spawnPosition);
     this.group.rotation.set(0, 0, 0);
     this.group.position.copy(this.position);
+    this.slowRune.visible = false;
+    this.slowRune.material.opacity = 0;
   }
 }

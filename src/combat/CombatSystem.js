@@ -11,8 +11,8 @@ import { Projectile } from './Projectile.js';
  *   束缚咒  伤害 5  / 速度 16 / 命中减速 40% 持续 1.5s / 冷却 8s
  */
 const SKILLS = {
-  1: { damage: 28, speed: 12, tint: 0xffa03c, scale: 2.4, power: 1.5, cdKey: 'skill1Cd' },
-  2: { damage: 5, speed: 16, tint: 0xb46aff, scale: 1.35, power: 0.8, slow: 1.5, cdKey: 'skill2Cd' },
+  1: { damage: 28, speed: 12, tint: 0xffa03c, scale: 2.4, power: 1.5, cdKey: 'skill1Cd', skillType: 'q' },
+  2: { damage: 5, speed: 16, tint: 0xb46aff, scale: 1.35, power: 0.8, slow: 1.5, cdKey: 'skill2Cd', skillType: 'e' },
 };
 
 export class CombatSystem {
@@ -20,7 +20,7 @@ export class CombatSystem {
     this.scene = scene;
     this.effects = effects;
     this.explosion = explosion;  // TargetImpactExplosion，由 Game 注入
-    this.onDamage = null;        // (worldPos, amount, target) => void
+    this.onDamage = null;        // (worldPos, amount, target, skillType) => void
     this.onImpact = null;        // (worldPos, power, target) => void，大爆炸编排
     this.onPlayerHit = null;     // (worldPos, amount) => void，玩家受击编排
 
@@ -53,6 +53,7 @@ export class CombatSystem {
       speed: opts.speed ?? this.projectileSpeed,
       damage: opts.damage ?? this.baseDamage,
       tint: opts.tint ?? 0x8fd0ff,
+      skillType: 'basic',
     });
     if (!p) return false;
     owner.cooldown = owner.attackCooldown;
@@ -71,6 +72,7 @@ export class CombatSystem {
       speed: opts.speed ?? this.projectileSpeed,
       damage: opts.damage ?? this.baseDamage,
       tint: opts.tint ?? 0x8fd0ff,
+      skillType: 'basic',
     });
     if (!p) return false;
     owner.cooldown = owner.attackCooldown;
@@ -115,6 +117,7 @@ export class CombatSystem {
 
       p.group.position.addScaledVector(p.velocity, dt);
       p.life -= dt;
+      p.updateSparkles(dt);
 
       const pos = p.group.position;
 
@@ -149,7 +152,9 @@ export class CombatSystem {
           this._hitPos.copy(pos);
           this._hitDir.copy(p.velocity).normalize();
 
-          // 闪避无敌窗口：伤害无效，播放“擦过”反馈
+          const skillType = p.skillType || 'basic';
+
+          // 闪避无敌窗口
           if (c.isInvincible) {
             this.effects.burst(this._hitPos, 0xd8ecff, 6);
             p.despawn();
@@ -158,35 +163,43 @@ export class CombatSystem {
 
           c.takeDamage(p.damage);
 
-          // 束缚咒：减速目标
           if (p.slow > 0 && c.applySlow) c.applySlow(0.6, p.slow);
 
           const power = p.power ?? 1;
           if (c.isTarget || power > 1) {
-            // 训练靶 或 大威力技能：电影感爆炸（弹道命中即销毁，同次攻击只触发一次）
+            // 训练靶 或 大威力技能：电影感爆炸
             const ep = Math.max(power, c.isTarget ? this.impactPower : power);
             if (this.explosion) {
               this.explosion.playMagicExplosion(this._hitPos, ep);
             } else {
               this.effects.burst(this._hitPos, 0xffd76a, 14);
             }
-            this.onImpact && this.onImpact(this._hitPos, ep, c);
+            // Q 技能额外：橙色冲击波环 + 强力闪光
+            if (skillType === 'q') {
+              this.effects.shockwave(this._hitPos, 0xffa03c, 6.0);
+              this.effects.impactFlash(this._hitPos, 0xffd76a, 3.0);
+              this.effects.burst(this._hitPos, 0xffa03c, 18, 0.18);
+            }
+            this.onImpact && this.onImpact(this._hitPos, ep, c, skillType);
           } else if (c.isPlayer) {
-            // 玩家被敌方命中：红色爆点 + 受击反馈（不放大爆炸，避免遮挡视野）
+            // 玩家被命中
             this.effects.burst(this._hitPos, 0xff5a3c, 12);
+            this.effects.impactFlash(this._hitPos, 0xff5a3c, 1.2);
             this.onPlayerHit && this.onPlayerHit(this._hitPos, p.damage);
           } else if (p.slow > 0) {
-            // 束缚命中：紫色符文爆点
-            this.effects.burst(this._hitPos, 0xb46aff, 14);
+            // 束缚咒命中：紫色爆发 + 符文环 + 强闪光
+            this.effects.burst(this._hitPos, 0xb46aff, 16, 0.15);
+            this.effects.impactFlash(this._hitPos, 0xb46aff, 2.0);
+            this.effects.shockwave(this._hitPos, 0xb46aff, 3.5);
           } else {
-            // 敌人被普攻命中：金色爆点 + 伤害数字
-            this.effects.burst(this._hitPos, 0xffd76a, 12);
+            // 敌人被普攻命中：蓝白爆点 + 闪光
+            this.effects.burst(this._hitPos, 0x9fd8ff, 12, 0.12);
+            this.effects.impactFlash(this._hitPos, 0xbfddff, 1.0);
           }
 
-          // 击退/旋转反馈
           if (c.applyImpact) c.applyImpact(this._hitDir, power);
 
-          this.onDamage && this.onDamage(this._hitPos, p.damage, c);
+          this.onDamage && this.onDamage(this._hitPos, p.damage, c, skillType);
           p.despawn();
           break;
         }

@@ -121,8 +121,12 @@ export class Game {
     window.addEventListener('keydown', unlockAudio, { once: true });
 
     // 命中回调
-    this.combat.onDamage = (worldPos, amount, target) => {
-      this.hud.spawnDamageNumber(worldPos, amount, this.camera);
+    this.combat.onDamage = (worldPos, amount, target, skillType) => {
+      this.hud.spawnDamageNumber(worldPos, amount, this.camera, skillType);
+      // 普攻命中敌人时微震（不叠加 explosion 的强震）
+      if (skillType === 'basic' && !target?.isPlayer && !target?.isTarget) {
+        this.addShake(0.15);
+      }
       if (
         this.phase === GAME_PHASE.TUTORIAL &&
         this.tutorialStep === 2 &&
@@ -135,9 +139,11 @@ export class Game {
         }
       }
     };
-    this.combat.onImpact = (worldPos, power) => {
+    this.combat.onImpact = (worldPos, power, target, skillType) => {
       this.addShake(power);
       this.hud.screenFlash();
+      const flashColor = skillType === 'q' ? 0xffa03c : 0xffd76a;
+      this.effects.impactFlash(worldPos, flashColor, 2.5 + power);
       this.audio.playExplosion(power, this.camera.position.distanceTo(worldPos));
     };
     this.combat.onPlayerHit = () => {
@@ -643,6 +649,7 @@ export class Game {
 
     // ---- HUD ----
     this.hud.update(this.player, this.target, this.enemy);
+    this.hud.updateDmgNumbers(dt);
 
     this._renderScene();
     this._updateDebug(dt);
@@ -819,6 +826,7 @@ export class Game {
 
     // HUD：只显示玩家血条和技能冷却
     this.hud.update(this.player, this.player, null);
+    this.hud.updateDmgNumbers(dt);
 
     this._renderScene();
   }
