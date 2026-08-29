@@ -2,16 +2,18 @@
  * BossCinematicUI —— Boss 战演出文字管理
  *
  * 统一管理所有 cinematic 文字：
- *   - Boss Title (典狱长 / THE WARDEN + 副标题)
+ *   - Boss Title (名称 + 副标题)
  *   - FIGHT!
  *   - 技能名称提示
  *   - PHASE II
  *   - BOSS DEFEATED
  *
  * 所有文字使用 CSS 动画 (opacity + transform)，不触发布局重排。
+ * 技能名称映射由 BossBattleController 通过 setSkillNames() 注入。
  */
 
-const SKILL_NAMES = {
+// 默认 Warden 技能名（向后兼容）
+const DEFAULT_SKILL_NAMES = {
   chain: { zh: '锁链禁锢', en: 'CHAIN' },
   magic_bolt: { zh: '重型魔法弹', en: 'MAGIC BOLT' },
   quake: { zh: '典狱震荡', en: 'QUAKE' },
@@ -23,11 +25,12 @@ export class BossCinematicUI {
     this._container = null;
     this._skillEl = null;
     this._skillTimer = null;
+    this._skillNames = { ...DEFAULT_SKILL_NAMES };
+    this._dangerousSkills = ['death_cage'];
     this._init();
   }
 
   _init() {
-    // Create container for cinematic overlays
     this._container = document.createElement('div');
     this._container.id = 'boss-cinematic-ui';
     this._container.style.cssText = `
@@ -37,29 +40,36 @@ export class BossCinematicUI {
     document.body.appendChild(this._container);
   }
 
+  /**
+   * 注入技能名称映射和危险技能列表
+   * @param {object} skillNames - { skillId: { zh, en } }
+   * @param {string[]} dangerousSkills - skillId list
+   */
+  setSkillNames(skillNames, dangerousSkills) {
+    this._skillNames = skillNames || { ...DEFAULT_SKILL_NAMES };
+    this._dangerousSkills = dangerousSkills || [];
+  }
+
   // ---- Boss Title ----
-  showBossTitle(onComplete) {
+  showBossTitle(titleZh = '', titleEn = '', titleSub = '') {
     const overlay = document.createElement('div');
     overlay.className = 'boss-cinematic-title';
     overlay.innerHTML = `
-      <div class="boss-cinematic-title-zh">典 狱 长</div>
-      <div class="boss-cinematic-title-en">THE WARDEN</div>
-      <div class="boss-cinematic-title-sub">「罪人，不得越狱。」</div>
+      <div class="boss-cinematic-title-zh">${titleZh}</div>
+      <div class="boss-cinematic-title-en">${titleEn}</div>
+      <div class="boss-cinematic-title-sub">${titleSub}</div>
     `;
     this._container.appendChild(overlay);
 
-    // Force reflow then add show class
     void overlay.offsetWidth;
     overlay.classList.add('show');
 
-    // Auto-hide after 1.8s, remove after 2.5s
     setTimeout(() => {
       overlay.classList.remove('show');
       overlay.classList.add('fade-out');
     }, 1800);
     setTimeout(() => {
       overlay.remove();
-      if (onComplete) onComplete();
     }, 2500);
   }
 
@@ -81,9 +91,14 @@ export class BossCinematicUI {
   }
 
   // ---- Skill Name ----
-  showSkillName(skillId, isDangerous = false) {
-    const info = SKILL_NAMES[skillId];
+  showSkillName(skillId, isDangerous) {
+    const info = this._skillNames[skillId];
     if (!info) return;
+
+    // 如果未显式传入 isDangerous，查 _dangerousSkills
+    if (isDangerous === undefined) {
+      isDangerous = this._dangerousSkills.includes(skillId);
+    }
 
     // Remove existing skill name if still visible
     if (this._skillEl) {
@@ -118,12 +133,14 @@ export class BossCinematicUI {
   }
 
   // ---- Phase II ----
-  showPhase2(onComplete) {
+  showPhase2(phase2Zh, phase2En) {
+    const zh = phase2Zh || '封 锁 解 除';
+    const en = phase2En || 'PHASE II';
     const overlay = document.createElement('div');
     overlay.className = 'boss-cinematic-phase2';
     overlay.innerHTML = `
-      <div class="boss-phase2-zh">封 锁 解 除</div>
-      <div class="boss-phase2-en">PHASE II</div>
+      <div class="boss-phase2-zh">${zh}</div>
+      <div class="boss-phase2-en">${en}</div>
     `;
     this._container.appendChild(overlay);
 
@@ -136,17 +153,18 @@ export class BossCinematicUI {
     }, 1200);
     setTimeout(() => {
       overlay.remove();
-      if (onComplete) onComplete();
     }, 1800);
   }
 
   // ---- Boss Defeated ----
-  showBossDefeated(onComplete) {
+  showBossDefeated(defeatedZh, defeatedName) {
+    const zh = defeatedZh || 'BOSS 击破';
+    const name = defeatedName || 'BOSS';
     const overlay = document.createElement('div');
     overlay.className = 'boss-cinematic-defeated';
     overlay.innerHTML = `
-      <div class="boss-defeated-zh">BOSS 击破</div>
-      <div class="boss-defeated-name">典 狱 长</div>
+      <div class="boss-defeated-zh">${zh}</div>
+      <div class="boss-defeated-name">${name}</div>
     `;
     this._container.appendChild(overlay);
 
@@ -159,7 +177,6 @@ export class BossCinematicUI {
     }, 2000);
     setTimeout(() => {
       overlay.remove();
-      if (onComplete) onComplete();
     }, 2600);
   }
 
@@ -167,7 +184,6 @@ export class BossCinematicUI {
   clear() {
     if (this._skillEl) { this._skillEl.remove(); this._skillEl = null; }
     if (this._skillTimer) { clearTimeout(this._skillTimer); this._skillTimer = null; }
-    // Clear any remaining cinematic overlays
     const overlays = this._container.querySelectorAll('.boss-cinematic-title, .boss-cinematic-fight, .boss-cinematic-phase2, .boss-cinematic-defeated');
     overlays.forEach(el => el.remove());
   }

@@ -948,12 +948,16 @@ html, body {
   background: rgba(30,12,14,0.85);
   border: 2px solid rgba(200,32,32,0.4);
   border-radius: 12px;
-  transition: border-color 0.3s, transform 0.2s;
-  cursor: default;
+  transition: border-color 0.3s, transform 0.2s, box-shadow 0.3s;
+  cursor: pointer;
 }
 .boss-card:hover {
   border-color: rgba(255,60,40,0.7);
   transform: translateY(-2px);
+}
+.boss-card.selected {
+  border-color: var(--boss-theme, #c82020);
+  box-shadow: 0 0 16px var(--boss-theme-glow, rgba(200,32,32,0.4));
 }
 .boss-card-portrait {
   font-size: 48px;
@@ -968,7 +972,18 @@ html, body {
 }
 .boss-card-name {
   font-size: 24px; color: #e8c0b0; font-weight: bold;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
+}
+.boss-card-sub {
+  font-size: 13px; color: #806060; margin-bottom: 6px;
+}
+.boss-card-tags {
+  display: flex; gap: 6px; margin-bottom: 6px;
+}
+.boss-tag {
+  font-size: 11px; padding: 2px 8px;
+  background: rgba(255,255,255,0.08); border-radius: 4px;
+  color: #b0a090;
 }
 .boss-card-danger {
   font-size: 14px; color: #ff6040;
@@ -976,6 +991,16 @@ html, body {
 }
 .boss-card-desc {
   font-size: 13px; color: #9a8070; line-height: 1.5;
+}
+.boss-card-locked {
+  font-size: 12px; color: #605050; margin-top: 6px;
+  font-style: italic;
+}
+.boss-card:not(.selected) {
+  opacity: 0.7;
+}
+.boss-card.selected {
+  opacity: 1;
 }
 .boss-select-actions {
   display: flex; flex-direction: column; gap: 12px;

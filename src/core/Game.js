@@ -75,6 +75,7 @@ export class Game {
     this.gameOver = false;
     this.combatants = [this.player, this.target, this.enemy];
     this.bossController = null;
+    this.selectedBossId = null;
 
     // 防回归：确保 Target 类携带身份标识
     console.assert(this.target.isTarget === true, 'Target.isTarget must be true');
@@ -881,13 +882,17 @@ export class Game {
 
   _enterBossSelect() {
     this.phase = GAME_PHASE.BOSS_SELECT;
-    this.mainMenu.hide();
+    // 不无条件 reset selectedBossId — 保留上次选择
+    // 只有 selectedBossId 失效（null / locked）才 fallback 到默认
     this.bossSelectPanel.show();
   }
 
   _startBossBattle() {
     this.phase = GAME_PHASE.BOSS_BATTLE;
     this.gameOver = false;
+
+    // 获取选中的 Boss ID
+    this.selectedBossId = this.bossSelectPanel.getSelectedBossId();
 
     // 隐藏普通敌人和训练靶
     this.enemy.group.visible = false;
@@ -915,7 +920,7 @@ export class Game {
     this.bossController.onComplete = (action) => this._onBossComplete(action);
     this.bossController.onShake = (power) => this.addShake(power);
     this.bossController.setCamera(this.camera);
-    this.bossController.start(this.player, this.arena);
+    this.bossController.start(this.player, this.arena, this.selectedBossId);
 
     this.input.setGameplayEnabled(true);
     this.audio.playBossAmbience();
