@@ -615,14 +615,13 @@ export class BossBattleController {
   destroy() {
     this._reset();
     if (this.ai) {
-      if (this.ai._clearZones) this.ai._clearZones();
-      if (this.ai._clearQuakeWave) this.ai._clearQuakeWave();
+      this.ai.destroy?.();
+      this.ai = null;
     }
     if (this.boss) {
       this.boss.destroy?.();
       this.boss = null;
     }
-    this.ai = null;
     this.cinematicUI.destroy();
     this.cameraDirector.cancel();
   }

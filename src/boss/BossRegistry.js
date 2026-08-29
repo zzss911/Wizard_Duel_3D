@@ -29,6 +29,8 @@
 
 import { WardenBoss } from './WardenBoss.js';
 import { WardenAI } from './WardenAI.js';
+import { VoidWitchBoss } from './VoidWitchBoss.js';
+import { VoidWitchAI } from './VoidWitchAI.js';
 
 const WARDEN_REGISTRY = {
   id: 'warden',
@@ -86,9 +88,10 @@ const VOID_WITCH_REGISTRY = {
   themeColor: '#8a4adf',
   model: './assets/models/void_witch_rigged.glb',
 
-  // Phase B 中会注入真正的 factory / aiFactory
-  factory: null,
-  aiFactory: null,
+  // Phase B: procedural model + basic AI skeleton
+  factory: (scene) => new VoidWitchBoss(scene),
+  aiFactory: (boss, combat, scene, effects, explosion) =>
+    new VoidWitchAI(boss, combat, scene, effects, explosion),
 
   cinematicConfig: {
     titleZh: '虚 空 女 巫',

@@ -1,0 +1,772 @@
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/GLTFLoader.js';
+
+/**
+ * VoidWitchBoss —— 虚空女巫 Boss
+ *
+ * 高速、悬浮、远程施法、空间魔法。
+ * 黑紫 / 深蓝 / 冷白 主视觉。
+ *
+ * GLB 尝试加载 → 失败 → procedural fallback。
+ * Loader cache 与 Warden 独立，只一次受控 console.warn。
+ */
+
+// ---- Module-level GLB loader cache (independent from Warden) ----
+let _vwLoader = null;
+let _vwLoadPromise = null;
+
+function loadVoidWitchGLB() {
+  if (_vwLoadPromise) return _vwLoadPromise;
+  if (!_vwLoader) _vwLoader = new GLTFLoader();
+  _vwLoadPromise = new Promise((resolve, reject) => {
+    _vwLoader.load(
+      './assets/models/void_witch_rigged.glb',
+      (gltf) => resolve({ scene: gltf.scene, animations: gltf.animations || [] }),
+      undefined,
+      (err) => reject(err)
+    );
+  });
+  return _vwLoadPromise;
+}
+
+// ---- Color palette ----
+const COL = {
+  robe: 0x1a0e2e,
+  robeLight: 0x2a1840,
+  skin: 0xc8b8e0,
+  eye: 0xe0d8ff,
+  voidCore: 0x8a4adf,
+  voidGlow: 0x6f3cff,
+  orb: 0x4a6fff,
+  ring: 0x7a3adf,
+  fog: 0x6a3acf,
+  rune: 0x8a4adf,
+  flash: 0xc0a0ff,
+};
+
+const FLOAT_Y = 0.4;
+
+export class VoidWitchBoss {
+  constructor(scene) {
+    this.scene = scene;
+    this.isBoss = true;
+    this.isEnemy = true;
+
+    this.maxHp = 560;
+    this.hp = this.maxHp;
+    this.radius = 0.8;
+    this.speed = 3.2;
+    this.dead = false;
+
+    this.spawnPosition = new THREE.Vector3(0, 0, -10);
+    this.position = this.spawnPosition.clone();
+    this._facing = 0;
+
+    this.moveIntent = new THREE.Vector3();
+    this._flash = 0;
+    this._castGlow = 0;
+    this._deathT = 0;
+
+    this.speedMult = 1;
+    this._slowT = 0;
+    this._invulnT = 0;
+    this.phase2 = false;
+    this.onDeath = null;
+
+    // Model loading state
+    this._modelLoaded = false;
+    this._modelLoading = false;
+    this._usingFallback = false;
+    this._destroyed = false;
+    this._modelHeight = 2.4;
+
+    // Procedural animation state
+    this._vwState = 'IDLE';
+    this._idleTime = 0;
+    this._floatPhase = 0;
+    this._ringRotation = 0;
+    this._phaseChangeT = 0;
+    this._hitFlashT = 0;
+
+    // Debug compatibility (Game.js _updateDebug accesses these)
+    this._currentAnim = null;
+    this._mixer = null;
+
+    // Flash materials (for hit flash)
+    this._flashMaterials = [];
+
+    // Build everything
+    this._buildGroup();
+    this._buildEffects();
+
+    this.group.position.copy(this.position);
+    this.group.visible = false;
+    this.scene.add(this.group);
+
+    // Start loading GLB
+    this._loadModel();
+  }
+
+  // ==================== Group / Model ====================
+
+  _buildGroup() {
+    this.group = new THREE.Group();
+    this.visualRoot = new THREE.Group();
+    this.group.add(this.visualRoot);
+  }
+
+  _loadModel() {
+    if (this._modelLoading || this._modelLoaded) return;
+    this._modelLoading = true;
+
+    loadVoidWitchGLB()
+      .then((result) => {
+        if (this._destroyed) return;
+        this._setupGLBModel(result.scene, result.animations);
+        this._modelLoaded = true;
+        this._modelLoading = false;
+      })
+      .catch(() => {
+        if (this._destroyed) return;
+        // Only one controlled warn — Promise is cached so this only fires once
+        console.warn('[VoidWitchBoss] void_witch_rigged.glb not found, using procedural fallback');
+        this._buildFallbackMesh();
+        this._modelLoaded = true;
+        this._modelLoading = false;
+      });
+  }
+
+  _setupGLBModel(gltfScene, animations) {
+    // Scale model to target height
+    const box = new THREE.Box3().setFromObject(gltfScene);
+    const size = box.getSize(new THREE.Vector3());
+    const scale = 2.4 / Math.max(0.1, size.y);
+    gltfScene.scale.setScalar(scale);
+
+    // Recompute bounding box after scaling
+    const box2 = new THREE.Box3().setFromObject(gltfScene);
+    const size2 = box2.getSize(new THREE.Vector3());
+    this._modelHeight = size2.y;
+
+    // Enable shadows and collect flash materials
+    gltfScene.traverse((child) => {
+      if (child.isMesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+        if (child.material && !this._flashMaterials.includes(child.material)) {
+          this._flashMaterials.push(child.material);
+          if (child.material.emissive) {
+            child.material._origEmissive = child.material.emissive.getHex();
+            child.material._origEmissiveIntensity = child.material.emissiveIntensity || 0;
+          }
+        }
+      }
+    });
+
+    this.visualRoot.add(gltfScene);
+    this._gltfScene = gltfScene;
+
+    // Add Void Witch specific effects
+    this._addVoidCore();
+    this._addArcaneRings();
+    this._addFloatingOrb();
+  }
+
+  _buildFallbackMesh() {
+    // Female humanoid mage silhouette — slender, floating, dark purple
+    const robeMat = new THREE.MeshStandardMaterial({
+      color: COL.robe, roughness: 0.6, metalness: 0.3,
+    });
+    const torsoMat = new THREE.MeshStandardMaterial({
+      color: COL.robeLight, roughness: 0.5, metalness: 0.4,
+    });
+    const skinMat = new THREE.MeshStandardMaterial({
+      color: COL.skin, roughness: 0.3, metalness: 0.1,
+    });
+
+    // Robe — inverted cone for flowing robe (not too long)
+    const robe = new THREE.Mesh(
+      new THREE.ConeGeometry(0.55, 1.4, 10, 1, true),
+      robeMat
+    );
+    robe.position.y = 0.7;
+    robe.castShadow = true;
+
+    // Torso upper — slender capsule
+    const torso = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.22, 0.5, 8, 12),
+      torsoMat
+    );
+    torso.position.y = 1.4;
+    torso.castShadow = true;
+
+    // Head — sphere
+    const head = new THREE.Mesh(
+      new THREE.SphereGeometry(0.18, 12, 12),
+      skinMat
+    );
+    head.position.y = 1.85;
+    head.castShadow = true;
+
+    // Hood — cone over head
+    const hood = new THREE.Mesh(
+      new THREE.ConeGeometry(0.25, 0.4, 8),
+      robeMat
+    );
+    hood.position.y = 2.0;
+    hood.castShadow = true;
+
+    // Arms — thin capsules
+    const armL = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.08, 0.5, 6, 8),
+      robeMat
+    );
+    armL.position.set(-0.28, 1.4, 0);
+    armL.rotation.z = 0.3;
+    armL.castShadow = true;
+
+    const armR = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.08, 0.5, 6, 8),
+      robeMat
+    );
+    armR.position.set(0.28, 1.4, 0);
+    armR.rotation.z = -0.3;
+    armR.castShadow = true;
+
+    // Add all to visual root
+    this.visualRoot.add(robe, torso, head, hood, armL, armR);
+
+    // Set flash materials
+    this._flashMaterials = [robeMat, torsoMat, skinMat];
+
+    // Set model height
+    this._modelHeight = 2.4;
+
+    // Add Void Witch specific effects
+    this._addVoidCore();
+    this._addArcaneRings();
+    this._addFloatingOrb();
+  }
+
+  // ==================== Void Core (chest) ====================
+
+  _addVoidCore() {
+    const coreGeo = new THREE.SphereGeometry(0.1, 12, 12);
+    const coreMat = new THREE.MeshBasicMaterial({
+      color: COL.voidCore, transparent: true, opacity: 0.8,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    this._voidCore = new THREE.Mesh(coreGeo, coreMat);
+    this._voidCore.position.set(0, 1.5, 0.15);
+    this._voidCoreMat = coreMat;
+    this.visualRoot.add(this._voidCore);
+
+    // Point light for void core glow
+    this._coreLight = new THREE.PointLight(COL.voidGlow, 2, 4, 2);
+    this._coreLight.position.set(0, 1.5, 0.2);
+    this.visualRoot.add(this._coreLight);
+  }
+
+  // ==================== Arcane Rings ====================
+
+  _addArcaneRings() {
+    // Ring 1 — horizontal, around waist
+    const ring1Geo = new THREE.TorusGeometry(0.5, 0.02, 8, 32);
+    const ring1Mat = new THREE.MeshBasicMaterial({
+      color: COL.ring, transparent: true, opacity: 0.6,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    this._arcaneRing1 = new THREE.Mesh(ring1Geo, ring1Mat);
+    this._arcaneRing1.position.set(0, 1.3, 0);
+    this._arcaneRing1.rotation.x = Math.PI / 2;
+    this._arcaneRing1Mat = ring1Mat;
+    this.visualRoot.add(this._arcaneRing1);
+
+    // Ring 2 — tilted, around upper body
+    const ring2Geo = new THREE.TorusGeometry(0.35, 0.015, 8, 32);
+    const ring2Mat = new THREE.MeshBasicMaterial({
+      color: COL.ring, transparent: true, opacity: 0.5,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    this._arcaneRing2 = new THREE.Mesh(ring2Geo, ring2Mat);
+    this._arcaneRing2.position.set(0, 1.6, 0);
+    this._arcaneRing2.rotation.x = Math.PI / 2 + 0.3;
+    this._arcaneRing2.rotation.z = 0.2;
+    this._arcaneRing2Mat = ring2Mat;
+    this.visualRoot.add(this._arcaneRing2);
+  }
+
+  // ==================== Floating Orb ====================
+
+  _addFloatingOrb() {
+    const orbGeo = new THREE.SphereGeometry(0.08, 12, 12);
+    const orbMat = new THREE.MeshBasicMaterial({
+      color: COL.orb, transparent: true, opacity: 0.9,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    this._floatingOrb = new THREE.Mesh(orbGeo, orbMat);
+    this._floatingOrb.position.set(0.35, 1.5, 0.2);
+    this._floatingOrbMat = orbMat;
+    this.visualRoot.add(this._floatingOrb);
+
+    // Point light for orb glow
+    this._orbLight = new THREE.PointLight(COL.orb, 1.5, 3, 2);
+    this._orbLight.position.copy(this._floatingOrb.position);
+    this.visualRoot.add(this._orbLight);
+  }
+
+  // ==================== Effects (fog + ground rune) ====================
+
+  _buildEffects() {
+    this._buildFog();
+    this._buildGroundRune();
+  }
+
+  _buildFog() {
+    const n = 40;
+    const geo = new THREE.BufferGeometry();
+    this._fogPos = new Float32Array(n * 3);
+    this._fogVel = new Float32Array(n * 3);
+    this._fogPhase = new Float32Array(n);
+
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = 0.6 + Math.random() * 0.8;
+      this._fogPos[i * 3] = Math.cos(a) * r;
+      this._fogPos[i * 3 + 1] = 0.2 + Math.random() * 2.0;
+      this._fogPos[i * 3 + 2] = Math.sin(a) * r;
+      this._fogVel[i * 3] = (Math.random() - 0.5) * 0.2;
+      this._fogVel[i * 3 + 1] = 0.15 + Math.random() * 0.2;
+      this._fogVel[i * 3 + 2] = (Math.random() - 0.5) * 0.2;
+      this._fogPhase[i] = Math.random() * Math.PI * 2;
+    }
+
+    this.fogMat = new THREE.PointsMaterial({
+      color: COL.fog, size: 0.4, transparent: true, opacity: 0.25,
+      blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true,
+    });
+
+    this.fog = new THREE.Points(geo, this.fogMat);
+    this.fog.frustumCulled = false;
+    this.fog.visible = false;
+
+    // Set initial positions
+    const posAttr = this.fog.geometry.attributes.position;
+    for (let i = 0; i < n; i++) {
+      posAttr.array[i * 3] = this._fogPos[i * 3];
+      posAttr.array[i * 3 + 1] = this._fogPos[i * 3 + 1];
+      posAttr.array[i * 3 + 2] = this._fogPos[i * 3 + 2];
+    }
+    posAttr.needsUpdate = true;
+    this._fogN = n;
+
+    this.scene.add(this.fog);
+  }
+
+  _buildGroundRune() {
+    this.groundRuneMat = new THREE.MeshBasicMaterial({
+      color: COL.rune, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    this.groundRune = new THREE.Mesh(
+      new THREE.RingGeometry(0.7, 1.0, 32),
+      this.groundRuneMat
+    );
+    this.groundRune.rotation.x = -Math.PI / 2;
+    this.groundRune.visible = false;
+    this.scene.add(this.groundRune);
+  }
+
+  // ==================== Public API ====================
+
+  get isModelReady() {
+    return this._modelLoaded;
+  }
+
+  get isInvincible() {
+    return this._invulnT > 0;
+  }
+
+  get headPosition() {
+    return new THREE.Vector3(
+      this.position.x,
+      FLOAT_Y + this._modelHeight * 0.85,
+      this.position.z
+    );
+  }
+
+  getCastOrigin(out) {
+    return out.set(
+      this.position.x + Math.sin(this._facing) * 0.6,
+      FLOAT_Y + this._modelHeight * 0.6,
+      this.position.z + Math.cos(this._facing) * 0.6
+    );
+  }
+
+  setCastGlow(v) {
+    this._castGlow = v;
+  }
+
+  setInvulnerable(t) {
+    this._invulnT = Math.max(this._invulnT, t);
+  }
+
+  faceTowards(point, dt) {
+    const targetYaw = Math.atan2(point.x - this.position.x, point.z - this.position.z);
+    let diff = targetYaw - this._facing;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    // Void Witch turns faster — more agile
+    this._facing += diff * Math.min(1, dt * 6);
+  }
+
+  showIntroRune() {
+    this.groundRune.visible = true;
+    this.groundRuneMat.opacity = 0;
+  }
+
+  show() {
+    this.group.visible = true;
+    this.fog.visible = true;
+  }
+
+  hide() {
+    this.group.visible = false;
+    this.fog.visible = false;
+    this.groundRune.visible = false;
+  }
+
+  reset() {
+    this.dead = false;
+    this.hp = this.maxHp;
+    this.phase2 = false;
+    this._deathT = 0;
+    this._flash = 0;
+    this._castGlow = 0;
+    this._invulnT = 0;
+    this.speedMult = 1;
+    this._slowT = 0;
+    this._vwState = 'IDLE';
+    this._idleTime = 0;
+    this._floatPhase = 0;
+    this._ringRotation = 0;
+    this._phaseChangeT = 0;
+    this._hitFlashT = 0;
+    this._currentAnim = 'Idle';
+    this.moveIntent.set(0, 0, 0);
+    this.position.copy(this.spawnPosition);
+    this.group.rotation.set(0, 0, 0);
+    this.group.position.copy(this.position);
+
+    // Reset visual root
+    if (this.visualRoot) {
+      this.visualRoot.scale.setScalar(1);
+      this.visualRoot.position.y = FLOAT_Y;
+    }
+
+    // Reset flash materials
+    for (const mat of this._flashMaterials) {
+      if (mat.emissive && mat._origEmissive !== undefined) {
+        mat.emissive.setHex(mat._origEmissive);
+        mat.emissiveIntensity = mat._origEmissiveIntensity;
+      }
+    }
+  }
+
+  takeDamage(amount) {
+    if (this.dead || this._invulnT > 0) return;
+    this.hp = Math.max(0, this.hp - amount);
+    this._flash = 0.15;
+    this._hitFlashT = 0.15;
+
+    if (this.hp <= 0) {
+      // Clear temporary visual states
+      this._slowT = 0;
+      this.speedMult = 1;
+      this._flash = 0;
+      for (const mat of this._flashMaterials) {
+        if (mat.emissive && mat._origEmissive !== undefined) {
+          mat.emissive.setHex(mat._origEmissive);
+          mat.emissiveIntensity = mat._origEmissiveIntensity;
+        }
+      }
+
+      this.dead = true;
+      this._deathT = 0;
+      this._vwState = 'DEAD';
+      this._currentAnim = 'Death';
+      this.onDeath && this.onDeath(this);
+    }
+  }
+
+  applyImpact(dir, power = 1) {
+    // Void Witch is light — impact affects her more
+  }
+
+  applySlow(mult, duration) {
+    this.speedMult = mult;
+    this._slowT = duration;
+  }
+
+  setPhase2() {
+    this.phase2 = true;
+    // Enhance void core and rings
+    if (this._voidCoreMat) this._voidCoreMat.opacity = 1.0;
+    if (this._coreLight) this._coreLight.intensity = 4;
+    if (this._arcaneRing1Mat) this._arcaneRing1Mat.opacity = 0.8;
+    if (this._arcaneRing2Mat) this._arcaneRing2Mat.opacity = 0.7;
+  }
+
+  setBossState(state) {
+    switch (state) {
+      case 'IDLE':
+        this._vwState = 'IDLE';
+        this._currentAnim = 'Idle';
+        break;
+      case 'PHASE_CHANGE':
+        this._vwState = 'PHASE_CHANGE';
+        this._phaseChangeT = 0;
+        this._currentAnim = 'PhaseChange';
+        break;
+      case 'DEAD':
+        this._vwState = 'DEAD';
+        this._currentAnim = 'Death';
+        break;
+      default:
+        break;
+    }
+  }
+
+  update(dt, arenaRadius) {
+    // Update procedural animation timers
+    this._idleTime += dt;
+    this._floatPhase += dt;
+
+    // --- Floating idle animation ---
+    const floatY = FLOAT_Y + Math.sin(this._floatPhase * 1.5) * 0.08;
+
+    // --- Arcane ring rotation ---
+    this._ringRotation += dt * (this.phase2 ? 2.0 : 1.2);
+    if (this._arcaneRing1) {
+      this._arcaneRing1.rotation.z = this._ringRotation;
+    }
+    if (this._arcaneRing2) {
+      this._arcaneRing2.rotation.y = this._ringRotation * 0.7;
+    }
+
+    // --- Void core pulsing ---
+    if (this._voidCoreMat) {
+      const pulse = 0.5 + Math.sin(this._idleTime * 3) * 0.2 + this._castGlow * 0.3;
+      this._voidCoreMat.opacity = pulse;
+    }
+    if (this._coreLight) {
+      this._coreLight.intensity = 2 + this._castGlow * 3;
+    }
+
+    // --- Floating orb bobbing ---
+    if (this._floatingOrb) {
+      this._floatingOrb.position.y = 1.5 + Math.sin(this._floatPhase * 2) * 0.1;
+      this._floatingOrb.position.x = 0.35 + Math.cos(this._floatPhase * 2) * 0.05;
+    }
+    if (this._orbLight && this._floatingOrb) {
+      this._orbLight.position.copy(this._floatingOrb.position);
+    }
+
+    // --- Death animation ---
+    if (this._vwState === 'DEAD') {
+      this._deathT += dt;
+      const dp = Math.min(1, this._deathT / 2.5);
+
+      // Stagger at start
+      if (this._deathT < 0.3) {
+        this.group.rotation.z = Math.sin(this._deathT * 30) * 0.05;
+      } else {
+        this.group.rotation.z = 0;
+      }
+
+      // Core brightness destabilizes — flickering
+      if (this._voidCoreMat) {
+        this._voidCoreMat.opacity = Math.max(0,
+          0.8 - this._deathT * 0.3 + Math.sin(this._deathT * 15) * 0.2
+        );
+      }
+      if (this._coreLight) {
+        this._coreLight.intensity = Math.max(0,
+          2 - this._deathT * 0.8 + Math.sin(this._deathT * 15) * 0.5
+        );
+      }
+
+      // Scale/opacity fade — dissolve-like
+      const fadeScale = 1 - dp * 0.5;
+      this.visualRoot.scale.setScalar(fadeScale);
+
+      // Rings accelerate and fade
+      this._ringRotation += dt * 5;
+      if (this._arcaneRing1Mat) this._arcaneRing1Mat.opacity = Math.max(0, 0.6 - dp * 0.6);
+      if (this._arcaneRing2Mat) this._arcaneRing2Mat.opacity = Math.max(0, 0.5 - dp * 0.5);
+
+      // Collapse toward center (sink down)
+      this.group.position.y = -dp * 0.5;
+
+      // Slowly fade out visual root
+      if (dp > 0.5 && this.visualRoot) {
+        this.visualRoot.scale.setScalar(fadeScale * (1 - (dp - 0.5) * 0.8));
+      }
+
+      return;
+    }
+
+    // --- Phase change animation ---
+    if (this._vwState === 'PHASE_CHANGE') {
+      this._phaseChangeT += dt;
+      // Rise up
+      const riseOffset = Math.sin(Math.min(1, this._phaseChangeT / 1.5) * Math.PI) * 0.3;
+      this.visualRoot.position.y = floatY + riseOffset;
+      // Ring acceleration
+      this._ringRotation += dt * 4;
+      // Core brightens
+      if (this._voidCoreMat) {
+        this._voidCoreMat.opacity = 0.8 + Math.sin(this._phaseChangeT * 5) * 0.2;
+      }
+    } else {
+      // Normal idle position
+      this.visualRoot.position.y = floatY;
+    }
+
+    // --- Emissive visual state priority: Hit > Slow > Original ---
+    if (this._hitFlashT > 0) {
+      this._hitFlashT -= dt;
+      const flashAmount = Math.max(0, this._hitFlashT) / 0.15;
+      for (const mat of this._flashMaterials) {
+        if (mat.emissive) {
+          mat.emissive.setHex(COL.flash);
+          mat.emissiveIntensity = flashAmount * 1.5;
+        }
+      }
+    } else if (this._slowT > 0 && this._flashMaterials.length > 0) {
+      // Slow visual: purple-blue pulse
+      const pulse = 0.3 + Math.sin(this._slowT * 8) * 0.2;
+      for (const mat of this._flashMaterials) {
+        if (mat.emissive) {
+          mat.emissive.setHex(COL.voidGlow);
+          mat.emissiveIntensity = pulse;
+        }
+      }
+    } else {
+      // Restore original emissive
+      for (const mat of this._flashMaterials) {
+        if (mat.emissive && mat._origEmissive !== undefined) {
+          mat.emissive.setHex(mat._origEmissive);
+          mat.emissiveIntensity = mat._origEmissiveIntensity;
+        } else if (mat.emissive) {
+          mat.emissiveIntensity = 0;
+        }
+      }
+    }
+
+    // --- Slow timer ---
+    if (this._slowT > 0) {
+      this._slowT = Math.max(0, this._slowT - dt);
+      if (this._slowT <= 0) this.speedMult = 1;
+    }
+
+    // --- Invulnerability timer ---
+    this._invulnT = Math.max(0, this._invulnT - dt);
+
+    // --- Movement ---
+    if (this.moveIntent.lengthSq() > 0.001) {
+      this.position.addScaledVector(this.moveIntent, this.speed * this.speedMult * dt);
+    }
+
+    // Arena bounds
+    const flat = Math.hypot(this.position.x, this.position.z);
+    const maxR = arenaRadius - this.radius;
+    if (flat > maxR) {
+      this.position.x *= maxR / flat;
+      this.position.z *= maxR / flat;
+    }
+
+    this.group.position.copy(this.position);
+    this.group.rotation.y = this._facing;
+
+    // Ground rune follows
+    this.groundRune.position.set(this.position.x, 0.05, this.position.z);
+    if (this.groundRune.visible) {
+      this.groundRuneMat.opacity = 0.3 + Math.sin(this._idleTime * 2) * 0.1;
+    }
+
+    // Fog update
+    if (this.fog.visible) {
+      this._updateFog(dt);
+    }
+  }
+
+  _updateFog(dt) {
+    const n = this._fogN;
+    for (let i = 0; i < n; i++) {
+      const i3 = i * 3;
+      this._fogPhase[i] += dt;
+      this._fogPos[i3] += this._fogVel[i3] * dt;
+      this._fogPos[i3 + 1] += this._fogVel[i3 + 1] * dt;
+      this._fogPos[i3 + 2] += this._fogVel[i3 + 2] * dt;
+      if (this._fogPos[i3 + 1] > 2.5) {
+        const a = Math.random() * Math.PI * 2;
+        const r = 0.6 + Math.random() * 0.8;
+        this._fogPos[i3] = Math.cos(a) * r;
+        this._fogPos[i3 + 1] = 0.2;
+        this._fogPos[i3 + 2] = Math.sin(a) * r;
+      }
+    }
+    const bx = this.position.x, bz = this.position.z;
+    const worldPos = this.fog.geometry.attributes.position.array;
+    for (let i = 0; i < n; i++) {
+      const i3 = i * 3;
+      worldPos[i3] = bx + this._fogPos[i3];
+      worldPos[i3 + 1] = this._fogPos[i3 + 1];
+      worldPos[i3 + 2] = bz + this._fogPos[i3 + 2];
+    }
+    this.fog.geometry.attributes.position.needsUpdate = true;
+  }
+
+  /**
+   * Remove all scene objects created by this Boss.
+   * Safe to call after async GLB load — sets _destroyed guard
+   * so the pending Promise will not add objects back.
+   * Idempotent: calling twice is a no-op.
+   */
+  destroy() {
+    if (this._destroyed) return;
+    this._destroyed = true;
+
+    // Remove scene objects
+    if (this.group) this.scene.remove(this.group);
+    if (this.fog) this.scene.remove(this.fog);
+    if (this.groundRune) this.scene.remove(this.groundRune);
+
+    // Dispose geometries and materials in visualRoot
+    if (this.visualRoot) {
+      this.visualRoot.traverse((child) => {
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) {
+          if (Array.isArray(child.material)) {
+            child.material.forEach(m => m.dispose());
+          } else {
+            child.material.dispose();
+          }
+        }
+      });
+    }
+
+    // Dispose ground rune
+    if (this.groundRune) {
+      this.groundRune.geometry.dispose();
+      this.groundRuneMat.dispose();
+    }
+
+    // Dispose fog
+    if (this.fog) {
+      this.fog.geometry.dispose();
+      this.fogMat.dispose();
+    }
+  }
+}

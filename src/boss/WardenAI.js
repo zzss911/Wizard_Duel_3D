@@ -755,6 +755,40 @@ export class WardenAI {
     }
   }
 
+  /**
+   * Universal destroy() contract:
+   * - Clean up all zones and quake waves
+   * - Null out callbacks to prevent stale closures
+   * - Does NOT call boss.destroy() — the controller handles that separately
+   */
+  destroy() {
+    this._clearZones();
+    this._clearQuakeWave();
+
+    // Null out pending skill state
+    this._pendingBolt = false;
+    this._pendingBoltTarget = null;
+    this._pendingBoltTimer = 0;
+    this._pendingQuake = false;
+    this._pendingQuakeArena = null;
+    this._pendingQuakeTimer = 0;
+    this._boltCount = 0;
+    this._boltTimer = 0;
+
+    // Null out callbacks
+    this.onShake = null;
+    this.onSkillTelegraph = null;
+    this.audio = null;
+    this.hud = null;
+
+    // Null out references (boss is destroyed separately by controller)
+    this.boss = null;
+    this.combat = null;
+    this.scene = null;
+    this.effects = null;
+    this.explosion = null;
+  }
+
   isAttacking() {
     return this.state === STATE.TELEGRAPH || this.state === STATE.ATTACK;
   }
