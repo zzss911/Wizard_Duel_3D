@@ -920,7 +920,15 @@ export class Game {
     this.bossController.onComplete = (action) => this._onBossComplete(action);
     this.bossController.onShake = (power) => this.addShake(power);
     this.bossController.setCamera(this.camera);
-    this.bossController.start(this.player, this.arena, this.selectedBossId);
+
+    const ok = this.bossController.start(this.player, this.arena, this.selectedBossId);
+    if (!ok) {
+      // Boss 创建失败 — 不进入战斗，回退到 Boss 选择
+      this.bossController.destroy();
+      this.bossController = null;
+      this._enterBossSelect();
+      return;
+    }
 
     this.input.setGameplayEnabled(true);
     this.audio.playBossAmbience();
