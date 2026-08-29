@@ -22,5 +22,7 @@ tmp/
 assets/models/warden_rigged_original.glb
 assets/models/player_original.glb
 assets/models/player.glb
+assets/models/player_rigged_v02_backup.glb
+assets/models/player_rigged_v03.glb
 uploads/
 __pw_browser_take_screenshot_*.png

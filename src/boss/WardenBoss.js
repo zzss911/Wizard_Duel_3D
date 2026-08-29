@@ -703,22 +703,13 @@ export class WardenBoss {
     this.skill1Cd = Math.max(0, this.skill1Cd - dt);
     this.skill2Cd = Math.max(0, this.skill2Cd - dt);
 
+    // ---- 减速计时（独立于 emissive 渲染） ----
     if (this._slowT > 0) {
-      this._slowT -= dt;
+      this._slowT = Math.max(0, this._slowT - dt);
       if (this._slowT <= 0) this.speedMult = 1;
-      // 紫色减速视觉：仅在非受击闪烁时显示
-      if (this._flash <= 0 && this._flashMaterials.length > 0) {
-        const pulse = 0.4 + Math.sin(this._slowT * 10) * 0.2;
-        for (const mat of this._flashMaterials) {
-          if (mat.emissive) {
-            mat.emissive.setHex(0x8a4adf);
-            mat.emissiveIntensity = pulse;
-          }
-        }
-      }
     }
 
-    // Hit flash on all materials
+    // ---- Emissive 统一优先级：Hit flash > Slow purple > Original ----
     if (this._flash > 0) {
       this._flash -= dt;
       const flashAmount = Math.max(0, this._flash) / 0.15;
@@ -726,6 +717,14 @@ export class WardenBoss {
         if (mat.emissive) {
           mat.emissive.setHex(0xff3030);
           mat.emissiveIntensity = flashAmount * 1.5;
+        }
+      }
+    } else if (this._slowT > 0 && this._flashMaterials.length > 0) {
+      const pulse = 0.4 + Math.sin(this._slowT * 10) * 0.2;
+      for (const mat of this._flashMaterials) {
+        if (mat.emissive) {
+          mat.emissive.setHex(0x8a4adf);
+          mat.emissiveIntensity = pulse;
         }
       }
     } else {

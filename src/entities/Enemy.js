@@ -124,6 +124,7 @@ export class Enemy {
       this._deathT += dt;
       this.group.rotation.x = THREE.MathUtils.lerp(this.group.rotation.x, -Math.PI / 2, Math.min(1, dt * 6));
       if (this._deathT > 0.8) this.group.position.y -= dt * 0.6;
+      this._clearSlowVisual();
       return;
     }
 
@@ -132,24 +133,25 @@ export class Enemy {
 
     // ---- 束缚减速：计时恢复 + 紫色符文可视反馈 ----
     if (this._slowT > 0) {
-      this._slowT -= dt;
-      if (this._slowT <= 0) {
-        this.speedMult = 1;
-        this.bodyMat.emissive.setHex(0x000000);
-        this.bodyMat.emissiveIntensity = 0;
-        this.slowRune.visible = false;
-        this.slowRune.material.opacity = 0;
-      } else if (this._flash <= 0) {
-        this.bodyMat.emissive.setHex(0x8a4adf);
-        this.bodyMat.emissiveIntensity = 0.5 + Math.sin(this._slowT * 12) * 0.2;
+      this._slowT = Math.max(0, this._slowT - dt);
+
+      if (this._slowT > 0) {
+        // 符文环：跟随 + 旋转 + 脉冲
+        this.slowRune.visible = true;
+        this.slowRune.position.set(this.position.x, 0.05, this.position.z);
+        this.slowRune.material.opacity = 0.5 + Math.sin(this._slowT * 8) * 0.2;
+        this.slowRune.material.rotation += dt * 1.5;
+        const rs = 1.8 + Math.sin(this._slowT * 6) * 0.15;
+        this.slowRune.scale.set(rs, rs, 1);
+
+        // 紫色身体发光（仅在非受击闪烁时覆盖）
+        if (this._flash <= 0) {
+          this.bodyMat.emissive.setHex(0x8a4adf);
+          this.bodyMat.emissiveIntensity = 0.5 + Math.sin(this._slowT * 12) * 0.2;
+        }
+      } else {
+        this._clearSlowVisual();
       }
-      // 符文环跟随 + 旋转 + 脉冲
-      this.slowRune.visible = true;
-      this.slowRune.position.set(this.position.x, 0.05, this.position.z);
-      this.slowRune.material.opacity = 0.5 + Math.sin(this._slowT * 8) * 0.2;
-      this.slowRune.material.rotation += dt * 1.5;
-      const rs = 1.8 + Math.sin(this._slowT * 6) * 0.15;
-      this.slowRune.scale.set(rs, rs, 1);
     }
 
     if (this._flash > 0) {
@@ -205,6 +207,16 @@ export class Enemy {
     this._slowT = duration;
   }
 
+  /** 清除减速视觉状态：符文环隐藏 + body emissive 恢复 */
+  _clearSlowVisual() {
+    this.speedMult = 1;
+    this._slowT = 0;
+    this.slowRune.visible = false;
+    this.slowRune.material.opacity = 0;
+    this.bodyMat.emissive.setHex(0x000000);
+    this.bodyMat.emissiveIntensity = 0;
+  }
+
   /** 重新开始 */
   reset() {
     this.dead = false;
@@ -212,14 +224,11 @@ export class Enemy {
     this.cooldown = 0;
     this.stagger = 0;
     this._deathT = 0;
-    this.speedMult = 1;
-    this._slowT = 0;
     this._knock.set(0, 0, 0);
     this.moveIntent.set(0, 0, 0);
     this.position.copy(this.spawnPosition);
     this.group.rotation.set(0, 0, 0);
     this.group.position.copy(this.position);
-    this.slowRune.visible = false;
-    this.slowRune.material.opacity = 0;
+    this._clearSlowVisual();
   }
 }
