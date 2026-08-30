@@ -66,6 +66,12 @@ export class VoidRift {
     // Tick timer
     this._tickT = 0;
 
+    // Fading start opacities (captured on FADING entry for linear fade)
+    this._fadeStartRing = 0;
+    this._fadeStartDisc = 0;
+    this._fadeStartCore = 0;
+    this._fadeStartPart = 0;
+
     // Position (XZ ground)
     this._pos = new THREE.Vector3();
 
@@ -233,8 +239,7 @@ export class VoidRift {
         }
 
         if (this._stateT >= this._activeDuration) {
-          this._state = RIFT_STATE.FADING;
-          this._stateT = 0;
+          this._enterFading();
         }
         break;
 
@@ -349,14 +354,25 @@ export class VoidRift {
     this._updateParticles(dt);
   }
 
+  _enterFading() {
+    this._state = RIFT_STATE.FADING;
+    this._stateT = 0;
+
+    // Capture start opacities for linear fade
+    this._fadeStartRing = this._ringMat.opacity;
+    this._fadeStartDisc = this._discMat.opacity;
+    this._fadeStartCore = this._coreMat.opacity;
+    this._fadeStartPart = this._partMat.opacity;
+  }
+
   _updateFadingVisuals() {
     const progress = Math.min(1, this._stateT / this._fadeDuration);
     const fade = 1 - progress;
 
-    this._ringMat.opacity *= fade;
-    this._discMat.opacity *= fade;
-    this._coreMat.opacity *= fade;
-    this._partMat.opacity *= fade;
+    this._ringMat.opacity = this._fadeStartRing * fade;
+    this._discMat.opacity = this._fadeStartDisc * fade;
+    this._coreMat.opacity = this._fadeStartCore * fade;
+    this._partMat.opacity = this._fadeStartPart * fade;
   }
 
   // ==================== Particles ====================

@@ -198,6 +198,7 @@ export class VoidWitchAI {
     this._blinkSub = null;
     this._blinkSubT = 0;
     this._ownedProjectiles.clear();
+    // Full lifecycle reset — clear all rifts to INACTIVE
     this._clearAllRifts();
     this.boss.cancelBlink?.();
     this.boss.clearInvulnerability?.();
@@ -212,7 +213,6 @@ export class VoidWitchAI {
     if (b.dead) {
       if (this._state !== AI_STATE.DEAD) {
         this.cancelCurrentSkill();
-        this._clearAllRifts();
         this._setState(AI_STATE.DEAD);
       }
       return;
@@ -220,17 +220,11 @@ export class VoidWitchAI {
 
     // --- Player dead check ---
     if (player.dead) {
-      // Stop new skills, stop firing, but don't despawn projectiles
-      if (this._state === AI_STATE.TELEGRAPH ||
-          this._state === AI_STATE.BARRAGE ||
-          this._state === AI_STATE.BLINK ||
-          this._state === AI_STATE.RIFT) {
-        this.cancelCurrentSkill();
-        this._setState(AI_STATE.IDLE);
-        this._stateT = 0;
-      }
-      // Clear all rifts — no hazard damage during player death
-      this._clearAllRifts();
+      // Stop all skills, clear all hazards (rifts), stop firing.
+      // cancelCurrentSkill handles Rift cleanup internally.
+      this.cancelCurrentSkill();
+      this._setState(AI_STATE.IDLE);
+      this._stateT = 0;
       return;
     }
 
@@ -382,10 +376,9 @@ export class VoidWitchAI {
 
   triggerPhaseChange() {
     if (this._state === AI_STATE.PHASE_CHANGE || this._state === AI_STATE.DEAD) return;
-    // Cancel blink first — clears blink invulnerability.
-    // Phase Change will then set its own 3s invulnerability.
+    // Cancel all skills + clear all rifts via cancelCurrentSkill.
+    // Then set Phase Change 3s invulnerability.
     this.cancelCurrentSkill();
-    this._clearAllRifts();
     this._setState(AI_STATE.PHASE_CHANGE);
     this.boss.setInvulnerable(3.0);
   }
@@ -660,8 +653,8 @@ export class VoidWitchAI {
     // Snapshot player position at execute time — no tracking
     const snapshot = player.position.clone();
 
-    // Spawn first Rift at player snapshot
-    const pos1 = this._computeRiftPosition(snapshot, arena, cfg.radius);
+    // Spawn first Rift at/near player snapshot
+    const pos1 = this._computeRiftPosition(snapshot, arena, cfg.radius, null);
     if (pos1) {
       const rift = this._riftPool.find(r => !r.active);
       if (rift) {
@@ -669,8 +662,8 @@ export class VoidWitchAI {
       }
     }
 
-    // Phase II: spawn second Rift with stagger
-    if (phaseCfg.count >= 2) {
+    // Phase II: spawn second Rift with stagger, offset from pos1
+    if (phaseCfg.count >= 2 && pos1) {
       const pos2 = this._computeRiftPosition(snapshot, arena, cfg.radius, pos1);
       if (pos2) {
         const rift2 = this._riftPool.find(r => !r.active);
@@ -694,65 +687,75 @@ export class VoidWitchAI {
   }
 
   /**
-   * Compute rift placement near player snapshot.
-   * First rift: at player snapshot.
-   * Second rift: random offset 2.5~4.5m from first, must be valid.
+   * Compute rift placement using unified _isValidHazardPosition validation.
+   *
+   * Two modes:
+   *  1. firstPos === null  →  First rift: try snapshot, then search around it.
+   *  2. firstPos !== null  →  Second rift: random offset from firstPos, must be valid.
+   *
+   * Search strategy (deterministic + small search):
+   *   angles:   0, 45, -45, 90, -90, 135, -135, 180
+   *   distances: 1.5, 2.5, 3.5
+   *   → 24 candidates, return first valid.
+   *
+   * If no valid position found → return null (safe cancel, no rift spawned).
    */
-  _computeRiftPosition(snapshot, arena, radius, firstPos = null) {
-    if (!firstPos) {
-      // First rift: at player snapshot
-      const pos = snapshot.clone();
-      pos.y = 0;
+  _computeRiftPosition(snapshot, arena, radius, firstPos) {
+    // --- Mode 2: second rift, offset from firstPos ---
+    if (firstPos) {
+      const maxAttempts = 10;
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 2.5 + Math.random() * 2.0;
 
-      // Clamp to arena bounds
-      const arenaRadius = arena.radius || 18;
-      const distFromCenter = Math.hypot(pos.x, pos.z);
-      const maxArenaDist = arenaRadius - radius - 0.5;
-      if (distFromCenter > maxArenaDist) {
-        const scale = maxArenaDist / distFromCenter;
-        pos.x *= scale;
-        pos.z *= scale;
-      }
+        const pos = new THREE.Vector3(
+          firstPos.x + Math.cos(angle) * dist,
+          0,
+          firstPos.z + Math.sin(angle) * dist
+        );
 
-      // Check pillar clearance
-      if (arena.pillars) {
-        for (const pil of arena.pillars) {
-          const d = Math.hypot(pos.x - pil.x, pos.z - pil.z);
-          if (d < pil.r + 0.5) {
-            // Too close to pillar — nudge outward
-            const angle = Math.atan2(pos.z - pil.z, pos.x - pil.x);
-            pos.x = pil.x + Math.cos(angle) * (pil.r + 0.5 + radius);
-            pos.z = pil.z + Math.sin(angle) * (pil.r + 0.5 + radius);
-          }
+        if (this._isValidHazardPosition(pos, arena, radius)) {
+          return pos;
         }
       }
-
-      return pos;
+      return null;
     }
 
-    // Second rift: random offset from first rift position
-    const maxAttempts = 10;
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const angle = Math.random() * Math.PI * 2;
-      const dist = 2.5 + Math.random() * 2.0; // 2.5~4.5m
+    // --- Mode 1: first rift, try snapshot then search ---
 
-      const pos = new THREE.Vector3(
-        firstPos.x + Math.cos(angle) * dist,
-        0,
-        firstPos.z + Math.sin(angle) * dist
-      );
+    // Candidate 0: snapshot itself
+    const snapPos = snapshot.clone();
+    snapPos.y = 0;
+    if (this._isValidHazardPosition(snapPos, arena, radius)) {
+      return snapPos;
+    }
 
-      if (this._isValidHazardPosition(pos, arena, radius)) {
-        return pos;
+    // Deterministic search around snapshot
+    const SEARCH_ANGLES = [0, 45, -45, 90, -90, 135, -135, 180];
+    const SEARCH_DISTANCES = [1.5, 2.5, 3.5];
+
+    for (const angDeg of SEARCH_ANGLES) {
+      const angRad = THREE.MathUtils.degToRad(angDeg);
+      for (const dist of SEARCH_DISTANCES) {
+        const pos = new THREE.Vector3(
+          snapPos.x + Math.cos(angRad) * dist,
+          0,
+          snapPos.z + Math.sin(angRad) * dist
+        );
+
+        if (this._isValidHazardPosition(pos, arena, radius)) {
+          return pos;
+        }
       }
     }
 
+    // No valid position found — safe cancel
     return null;
   }
 
   /**
-   * AI generic helper: validate hazard placement.
-   * Checks: finite, arena bounds, pillar clearance (center not inside pillar).
+   * Unified validator for hazard placement.
+   * Checks: finite coordinates, arena bounds, pillar clearance (center not inside pillar).
    */
   _isValidHazardPosition(pos, arena, radius) {
     if (!isFinite(pos.x) || !isFinite(pos.z)) return false;
@@ -886,12 +889,18 @@ export class VoidWitchAI {
   // ==================== Interrupt / Cleanup ====================
 
   /**
-   * PUBLIC contract: Cancel any in-progress skill.
-   * Called by the controller on interrupts (player death, boss death, phase change).
+   * PUBLIC contract: Cancel any in-progress skill and clean up ALL persistent
+   * hazards owned by this AI.
    *
-   * - Hides blink markers, restores visuals
-   * - Clears blink invulnerability
-   * - Despawns ONLY projectiles still owned by this boss
+   * Called by the controller on interrupts (player death, boss death, phase
+   * change). The controller does NOT need to know about Rifts — this method
+   * is the single cleanup entry point for every Boss skill:
+   *
+   *   - Blink markers / invulnerability
+   *   - Barrage firing state + owned projectiles
+   *   - Rift pool (all rifts reset to INACTIVE, visuals hidden)
+   *
+   * Idempotent: safe to call multiple times.
    */
   cancelCurrentSkill() {
     // Cancel blink visuals + clear blink invulnerability
@@ -914,6 +923,9 @@ export class VoidWitchAI {
       }
     }
     this._ownedProjectiles.clear();
+
+    // Clear all rifts — no hazard damage during interrupts
+    this._clearAllRifts();
   }
 
   /**
@@ -923,10 +935,10 @@ export class VoidWitchAI {
    * - Does NOT call boss.destroy() — the controller handles that separately
    */
   destroy() {
+    // cancelCurrentSkill clears rifts + projectiles + blink state
     this.cancelCurrentSkill();
-    this._clearAllRifts();
 
-    // Destroy rift pool
+    // Destroy rift pool (dispose geometry + materials)
     for (const rift of this._riftPool) {
       rift.destroy();
     }
