@@ -794,15 +794,19 @@ export class VoidWitchBoss {
   }
 
   update(dt, arenaRadius) {
-    // Update procedural animation timers
+    // --- Lifecycle / simulation timers (always run) ---
     this._idleTime += dt;
     this._floatPhase += dt;
 
-    // --- Floating idle animation ---
+    const customCinematic = this._cinematicKind != null;
     const floatY = FLOAT_Y + Math.sin(this._floatPhase * 1.5) * 0.08;
 
     // --- Arcane ring rotation ---
-    this._ringRotation += dt * (this.phase2 ? 2.0 : 1.2);
+    // Counter: cinematic hooks advance it themselves; skip to avoid double-advance
+    if (!customCinematic) {
+      this._ringRotation += dt * (this.phase2 ? 2.0 : 1.2);
+    }
+    // Mesh application always runs (cinematic hooks advance counter, this applies it)
     if (this._arcaneRing1) {
       this._arcaneRing1.rotation.z = this._ringRotation;
     }
@@ -810,35 +814,36 @@ export class VoidWitchBoss {
       this._arcaneRing2.rotation.y = this._ringRotation * 0.7;
     }
 
-    // --- Mirror real tell: slightly brighter secondary ring ---
-    if (this._mirrorTellActive) {
-      if (this._arcaneRing2Mat) {
-        this._arcaneRing2Mat.opacity = (this.phase2 ? 0.7 : 0.5) + 0.08;
+    // --- Normal visual presentation (skip during custom cinematic) ---
+    if (!customCinematic) {
+      // Mirror real tell: slightly brighter secondary ring
+      if (this._mirrorTellActive) {
+        if (this._arcaneRing2Mat) {
+          this._arcaneRing2Mat.opacity = (this.phase2 ? 0.7 : 0.5) + 0.08;
+        }
+      }
+
+      // Void core pulsing
+      if (this._voidCoreMat) {
+        const pulse = 0.5 + Math.sin(this._idleTime * 3) * 0.2 + this._castGlow * 0.3;
+        this._voidCoreMat.opacity = pulse;
+      }
+      if (this._coreLight) {
+        const tellBoost = this._mirrorTellActive ? 0.2 : 0;
+        this._coreLight.intensity = (this.phase2 ? 4 : 3.5) + this._castGlow * 3 + tellBoost;
+      }
+
+      // Floating orb bobbing
+      if (this._floatingOrb) {
+        this._floatingOrb.position.y = 1.5 + Math.sin(this._floatPhase * 2) * 0.1;
+        this._floatingOrb.position.x = 0.35 + Math.cos(this._floatPhase * 2) * 0.05;
+      }
+      if (this._orbLight && this._floatingOrb) {
+        this._orbLight.position.copy(this._floatingOrb.position);
       }
     }
 
-    // --- Void core pulsing ---
-    if (this._voidCoreMat) {
-      const pulse = 0.5 + Math.sin(this._idleTime * 3) * 0.2 + this._castGlow * 0.3;
-      this._voidCoreMat.opacity = pulse;
-    }
-    if (this._coreLight) {
-      // Mirror real tell: ~5% brighter core light (subtle, not obvious)
-      const tellBoost = this._mirrorTellActive ? 0.2 : 0;
-      this._coreLight.intensity = (this.phase2 ? 4 : 3.5) + this._castGlow * 3 + tellBoost;
-    }
-
-    // --- Floating orb bobbing ---
-    if (this._floatingOrb) {
-      this._floatingOrb.position.y = 1.5 + Math.sin(this._floatPhase * 2) * 0.1;
-      this._floatingOrb.position.x = 0.35 + Math.cos(this._floatPhase * 2) * 0.05;
-    }
-    if (this._orbLight && this._floatingOrb) {
-      this._orbLight.position.copy(this._floatingOrb.position);
-    }
-
-    // --- Death animation ---
-    // Skip if death cinematic hook is active (handles its own death visuals)
+    // --- Death animation (legacy, skip when custom death cinematic active) ---
     if (this._vwState === 'DEAD' && this._cinematicKind !== 'death') {
       this._deathT += dt;
       const dp = Math.min(1, this._deathT / 2.5);
@@ -882,62 +887,66 @@ export class VoidWitchBoss {
       return;
     }
 
-    // --- Phase change animation ---
-    // Skip if phase change cinematic hook is active
-    if (this._vwState === 'PHASE_CHANGE' && this._cinematicKind !== 'phase_change') {
-      this._phaseChangeT += dt;
-      // Rise up
-      const riseOffset = Math.sin(Math.min(1, this._phaseChangeT / 1.5) * Math.PI) * 0.3;
-      this.visualRoot.position.y = floatY + riseOffset;
-      // Ring acceleration
-      this._ringRotation += dt * 4;
-      // Core brightens
-      if (this._voidCoreMat) {
-        this._voidCoreMat.opacity = 0.8 + Math.sin(this._phaseChangeT * 5) * 0.2;
+    // --- Phase change / normal idle position (skip during custom cinematic) ---
+    if (!customCinematic) {
+      if (this._vwState === 'PHASE_CHANGE' && this._cinematicKind !== 'phase_change') {
+        this._phaseChangeT += dt;
+        // Rise up
+        const riseOffset = Math.sin(Math.min(1, this._phaseChangeT / 1.5) * Math.PI) * 0.3;
+        this.visualRoot.position.y = floatY + riseOffset;
+        // Ring acceleration
+        this._ringRotation += dt * 4;
+        // Core brightens
+        if (this._voidCoreMat) {
+          this._voidCoreMat.opacity = 0.8 + Math.sin(this._phaseChangeT * 5) * 0.2;
+        }
+      } else {
+        // Normal idle position
+        this.visualRoot.position.y = floatY;
+      }
+
+      // --- Emissive visual state priority: Hit > Slow > Original ---
+      if (this._hitFlashT > 0) {
+        this._hitFlashT -= dt;
+        const flashAmount = Math.max(0, this._hitFlashT) / 0.15;
+        for (const mat of this._flashMaterials) {
+          if (mat.emissive) {
+            mat.emissive.setHex(COL.flash);
+            mat.emissiveIntensity = flashAmount * 1.5;
+          }
+        }
+      } else if (this._slowT > 0 && this._flashMaterials.length > 0) {
+        // Slow visual: purple-blue pulse
+        const pulse = 0.3 + Math.sin(this._slowT * 8) * 0.2;
+        for (const mat of this._flashMaterials) {
+          if (mat.emissive) {
+            mat.emissive.setHex(COL.voidGlow);
+            mat.emissiveIntensity = pulse;
+          }
+        }
+      } else {
+        // Restore original emissive
+        for (const mat of this._flashMaterials) {
+          if (mat.emissive && mat._origEmissive !== undefined) {
+            mat.emissive.setHex(mat._origEmissive);
+            mat.emissiveIntensity = mat._origEmissiveIntensity;
+          } else if (mat.emissive) {
+            mat.emissiveIntensity = 0;
+          }
+        }
       }
     } else {
-      // Normal idle position
-      this.visualRoot.position.y = floatY;
+      // During cinematic: still decrement hit flash timer (lifecycle only)
+      if (this._hitFlashT > 0) this._hitFlashT -= dt;
     }
 
-    // --- Emissive visual state priority: Hit > Slow > Original ---
-    if (this._hitFlashT > 0) {
-      this._hitFlashT -= dt;
-      const flashAmount = Math.max(0, this._hitFlashT) / 0.15;
-      for (const mat of this._flashMaterials) {
-        if (mat.emissive) {
-          mat.emissive.setHex(COL.flash);
-          mat.emissiveIntensity = flashAmount * 1.5;
-        }
-      }
-    } else if (this._slowT > 0 && this._flashMaterials.length > 0) {
-      // Slow visual: purple-blue pulse
-      const pulse = 0.3 + Math.sin(this._slowT * 8) * 0.2;
-      for (const mat of this._flashMaterials) {
-        if (mat.emissive) {
-          mat.emissive.setHex(COL.voidGlow);
-          mat.emissiveIntensity = pulse;
-        }
-      }
-    } else {
-      // Restore original emissive
-      for (const mat of this._flashMaterials) {
-        if (mat.emissive && mat._origEmissive !== undefined) {
-          mat.emissive.setHex(mat._origEmissive);
-          mat.emissiveIntensity = mat._origEmissiveIntensity;
-        } else if (mat.emissive) {
-          mat.emissiveIntensity = 0;
-        }
-      }
-    }
-
-    // --- Slow timer ---
+    // --- Slow timer (lifecycle, always) ---
     if (this._slowT > 0) {
       this._slowT = Math.max(0, this._slowT - dt);
       if (this._slowT <= 0) this.speedMult = 1;
     }
 
-    // --- Invulnerability timer ---
+    // --- Invulnerability timer (lifecycle, always) ---
     this._invulnT = Math.max(0, this._invulnT - dt);
 
     // --- Movement ---
@@ -956,13 +965,13 @@ export class VoidWitchBoss {
     this.group.position.copy(this.position);
     this.group.rotation.y = this._facing;
 
-    // Ground rune follows
+    // Ground rune follows (position always; opacity pulse only when not cinematic)
     this.groundRune.position.set(this.position.x, 0.05, this.position.z);
-    if (this.groundRune.visible) {
+    if (!customCinematic && this.groundRune.visible) {
       this.groundRuneMat.opacity = 0.3 + Math.sin(this._idleTime * 2) * 0.1;
     }
 
-    // Fog update
+    // Fog update (lifecycle, always)
     if (this.fog.visible) {
       this._updateFog(dt);
     }
@@ -1088,6 +1097,9 @@ export class VoidWitchBoss {
         // Fog density ramps up
         if (this.fog.material) this.fog.material.opacity = tp * 0.4;
       }
+      // Core dim before emergence
+      if (this._voidCoreMat) this._voidCoreMat.opacity = 0;
+      if (this._coreLight) this._coreLight.intensity = 0;
     }
 
     // Phase 2 (0.7~1.5s): Boss emerges from void — scale 0.35→1
@@ -1103,6 +1115,9 @@ export class VoidWitchBoss {
       const scale = 0.35 + (1 - 0.35) * ease;
       this.visualRoot.scale.setScalar(scale);
       if (this.groundRuneMat) this.groundRuneMat.opacity = 0.7 + tp * 0.3;
+      // Core activates as boss emerges
+      if (this._voidCoreMat) this._voidCoreMat.opacity = ease * 0.8;
+      if (this._coreLight) this._coreLight.intensity = ease * 3.5;
       // First emergence shake
       if (t >= 0.7 && t < 0.75 && !this._vwIntroShake) {
         this._vwIntroShake = true;
@@ -1122,12 +1137,18 @@ export class VoidWitchBoss {
       this.visualRoot.position.y = this.FLOAT_Y + riseOffset;
       // Ring rotation accelerates
       this._ringRotation += dt * (1.2 + tp * 2);
+      // Core fully active with subtle pulse
+      if (this._voidCoreMat) this._voidCoreMat.opacity = 0.8 + Math.sin(t * 3) * 0.1;
+      if (this._coreLight) this._coreLight.intensity = 3.5 + tp * 0.5;
     }
 
     // Phase 4 (2.2s+): Hold — title/HP/FIGHT handled by controller timeline
     if (t >= 2.2) {
       this.setCastGlow(0.5);
       this.visualRoot.position.y = this.FLOAT_Y;
+      // Core steady
+      if (this._voidCoreMat) this._voidCoreMat.opacity = 0.8 + Math.sin(t * 3) * 0.1;
+      if (this._coreLight) this._coreLight.intensity = 3.5 + this._castGlow * 3;
     }
 
     // Cinematic camera: slow orbit around boss
@@ -1248,9 +1269,21 @@ export class VoidWitchBoss {
     // 2.4~2.7s: Core collapse + flash + shake
 
     if (t < 0.5) {
-      // Stagger — boss.update() handles the wobble
+      // Stagger — wobble + core flicker (cinematic owns this now)
+      this.group.rotation.z = Math.sin(t * 30) * 0.05;
+      if (this._voidCoreMat) {
+        this._voidCoreMat.opacity = Math.max(0,
+          0.8 - t * 0.3 + Math.sin(t * 15) * 0.2
+        );
+      }
+      if (this._coreLight) {
+        this._coreLight.intensity = Math.max(0,
+          3.5 - t * 2 + Math.sin(t * 15) * 0.5
+        );
+      }
     } else if (t < 1.4) {
       // Cracks + collapse
+      this.group.rotation.z = 0;
       if (this._vwDeathStage < 1) {
         this._vwDeathStage = 1;
         // Small crack burst
@@ -1264,6 +1297,11 @@ export class VoidWitchBoss {
       if (this._voidCoreMat) {
         this._voidCoreMat.opacity = Math.max(0,
           0.6 - (t - 0.5) * 0.3 + Math.sin(t * 20) * 0.25
+        );
+      }
+      if (this._coreLight) {
+        this._coreLight.intensity = Math.max(0,
+          2 - (t - 0.5) * 1.0 + Math.sin(t * 20) * 0.5
         );
       }
     } else if (t < 2.3) {
@@ -1284,6 +1322,9 @@ export class VoidWitchBoss {
       // Rings fade
       if (this._arcaneRing1Mat) this._arcaneRing1Mat.opacity = Math.max(0, 0.6 - dp * 0.6);
       if (this._arcaneRing2Mat) this._arcaneRing2Mat.opacity = Math.max(0, 0.5 - dp * 0.5);
+      // Core fades during dissolve
+      if (this._voidCoreMat) this._voidCoreMat.opacity = Math.max(0, 0.5 - dp * 0.5);
+      if (this._coreLight) this._coreLight.intensity = Math.max(0, 1.5 - dp * 1.5);
     } else if (t < 2.7) {
       // Core collapse + flash + shake
       if (this._vwDeathStage < 3) {
