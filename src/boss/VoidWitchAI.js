@@ -1,19 +1,22 @@
 import * as THREE from 'three';
+import { VoidRift } from './VoidRift.js';
 
 /**
- * VoidWitchAI —— 虚空女巫 AI (Phase C)
+ * VoidWitchAI —— 虚空女巫 AI (Phase D)
  *
  * State machine:
- *   IDLE → MOVE → CHOOSE → TELEGRAPH → BARRAGE / BLINK → RECOVER → IDLE
+ *   IDLE → MOVE → CHOOSE → TELEGRAPH → BARRAGE / BLINK / RIFT → RECOVER → IDLE
  *   PHASE_CHANGE (interrupt)
  *   DEAD
  *
  * Skills:
  *   1. Void Barrage — Fan of void projectiles, no homing (snapshot player pos)
  *   2. Void Blink   — Telegraph marker → vanish → teleport → reappear
+ *   3. Void Rift    — Persistent ground hazard, tick-based damage (Phase D)
  *
  * Skill selection: distance-based weights, no 3 consecutive same skills.
  * Reuses CombatSystem projectile pool. Boss owns its projectiles for cleanup.
+ * Rift pool is fixed (RIFT_POOL_SIZE) and pre-created in constructor.
  */
 
 const AI_STATE = {
@@ -23,6 +26,7 @@ const AI_STATE = {
   TELEGRAPH: 'TELEGRAPH',
   BARRAGE: 'BARRAGE',
   BLINK: 'BLINK',
+  RIFT: 'RIFT',
   RECOVER: 'RECOVER',
   PHASE_CHANGE: 'PHASE_CHANGE',
   DEAD: 'DEAD',
@@ -31,7 +35,10 @@ const AI_STATE = {
 const SKILL = {
   BARRAGE: 'void_barrage',
   BLINK: 'void_blink',
+  RIFT: 'void_rift',
 };
+
+const RIFT_POOL_SIZE = 4;
 
 const SKILL_CONFIG = {
   [SKILL.BARRAGE]: {
@@ -62,6 +69,20 @@ const SKILL_CONFIG = {
     phase1: { angles: [-60, 60] },
     phase2: { angles: [-120, -60, 60, 120] },
   },
+  [SKILL.RIFT]: {
+    telegraph: 0.9,
+    recover: 0.8,
+    // Rift hazard parameters
+    radius: 2.4,
+    warningDuration: 0.9,
+    activeDuration: 2.6,
+    fadeDuration: 0.4,
+    tickInterval: 0.6,
+    damage: 7,
+    // Phase config: count + stagger for 2nd rift
+    phase1: { count: 1, stagger: 0 },
+    phase2: { count: 2, stagger: 0.35 },
+  },
 };
 
 // Boss animation state names for setBossState
@@ -72,6 +93,7 @@ const STATE_ANIM_MAP = {
   [AI_STATE.TELEGRAPH]: 'IDLE',
   [AI_STATE.BARRAGE]: 'IDLE',
   [AI_STATE.BLINK]: 'IDLE',
+  [AI_STATE.RIFT]: 'IDLE',
   [AI_STATE.RECOVER]: 'IDLE',
   [AI_STATE.PHASE_CHANGE]: 'PHASE_CHANGE',
   [AI_STATE.DEAD]: 'DEAD',
@@ -143,6 +165,12 @@ export class VoidWitchAI {
     // before despawning, so a pooled projectile reused by the player is never touched.
     this._ownedProjectiles = new Set();
 
+    // Void Rift pool (fixed size, pre-created)
+    this._riftPool = [];
+    for (let i = 0; i < RIFT_POOL_SIZE; i++) {
+      this._riftPool.push(new VoidRift(this.scene, this.effects));
+    }
+
     // Scratch vectors (avoid per-frame allocation)
     this._tmp = new THREE.Vector3();
     this._tmp2 = new THREE.Vector3();
@@ -170,6 +198,7 @@ export class VoidWitchAI {
     this._blinkSub = null;
     this._blinkSubT = 0;
     this._ownedProjectiles.clear();
+    this._clearAllRifts();
     this.boss.cancelBlink?.();
     this.boss.clearInvulnerability?.();
     this.boss.setBossState('IDLE');
@@ -183,6 +212,7 @@ export class VoidWitchAI {
     if (b.dead) {
       if (this._state !== AI_STATE.DEAD) {
         this.cancelCurrentSkill();
+        this._clearAllRifts();
         this._setState(AI_STATE.DEAD);
       }
       return;
@@ -193,11 +223,14 @@ export class VoidWitchAI {
       // Stop new skills, stop firing, but don't despawn projectiles
       if (this._state === AI_STATE.TELEGRAPH ||
           this._state === AI_STATE.BARRAGE ||
-          this._state === AI_STATE.BLINK) {
+          this._state === AI_STATE.BLINK ||
+          this._state === AI_STATE.RIFT) {
         this.cancelCurrentSkill();
         this._setState(AI_STATE.IDLE);
         this._stateT = 0;
       }
+      // Clear all rifts — no hazard damage during player death
+      this._clearAllRifts();
       return;
     }
 
@@ -213,6 +246,9 @@ export class VoidWitchAI {
         }
       }
     }
+
+    // Update all active Rifts regardless of AI state
+    this._updateRifts(dt, player);
 
     switch (this._state) {
       case AI_STATE.IDLE:
@@ -302,6 +338,9 @@ export class VoidWitchAI {
             } else if (this._currentSkill === SKILL.BLINK) {
               this._setState(AI_STATE.BLINK);
               this._beginBlinkExecute();
+            } else if (this._currentSkill === SKILL.RIFT) {
+              this._setState(AI_STATE.RIFT);
+              this._beginRiftSkill(player, arena);
             }
           }
         }
@@ -313,6 +352,10 @@ export class VoidWitchAI {
 
       case AI_STATE.BLINK:
         this._updateBlink(dt, player, arena);
+        break;
+
+      case AI_STATE.RIFT:
+        this._updateRiftSkill(dt, player, arena);
         break;
 
       case AI_STATE.RECOVER:
@@ -342,6 +385,7 @@ export class VoidWitchAI {
     // Cancel blink first — clears blink invulnerability.
     // Phase Change will then set its own 3s invulnerability.
     this.cancelCurrentSkill();
+    this._clearAllRifts();
     this._setState(AI_STATE.PHASE_CHANGE);
     this.boss.setInvulnerable(3.0);
   }
@@ -355,7 +399,8 @@ export class VoidWitchAI {
   isAttacking() {
     return this._state === AI_STATE.TELEGRAPH ||
            this._state === AI_STATE.BARRAGE ||
-           this._state === AI_STATE.BLINK;
+           this._state === AI_STATE.BLINK ||
+           this._state === AI_STATE.RIFT;
   }
 
   // ==================== State Transitions ====================
@@ -387,7 +432,7 @@ export class VoidWitchAI {
   // ==================== Skill Selection ====================
 
   _chooseSkill(dist) {
-    const available = [SKILL.BARRAGE, SKILL.BLINK];
+    const available = [SKILL.BARRAGE, SKILL.BLINK, SKILL.RIFT];
 
     // No 3 consecutive same skills
     const filtered = available.filter(s => {
@@ -403,15 +448,18 @@ export class VoidWitchAI {
 
     // Distance-based weighting
     if (dist > 9) {
-      // Far: prefer Barrage
+      // Far: prefer Barrage, Rift for area denial
       weights[SKILL.BARRAGE] = 3;
+      weights[SKILL.RIFT] = 2;
       weights[SKILL.BLINK] = 1;
     } else if (dist < 6) {
-      // Close: prefer Blink (reposition away)
+      // Close: prefer Blink (reposition away), Rift for pressure
       weights[SKILL.BARRAGE] = 1;
+      weights[SKILL.RIFT] = 2;
       weights[SKILL.BLINK] = 3;
     } else {
-      // Mid range: balanced
+      // Mid range: Rift slightly preferred
+      weights[SKILL.RIFT] = 2.5;
       weights[SKILL.BARRAGE] = 2;
       weights[SKILL.BLINK] = 2;
     }
@@ -419,6 +467,7 @@ export class VoidWitchAI {
     // Phase 2: slight preference for Blink (more aggressive repositioning)
     if (this._phase === 2) {
       weights[SKILL.BLINK] = (weights[SKILL.BLINK] || 0) * 1.2;
+      weights[SKILL.RIFT] = (weights[SKILL.RIFT] || 0) * 1.15;
     }
 
     let total = 0;
@@ -453,6 +502,10 @@ export class VoidWitchAI {
       this._blinkDest.copy(dest);
       this.boss.beginBlink();
       this.boss.showBlinkMarker(dest);
+    } else if (skill === SKILL.RIFT) {
+      // Rift telegraph: small burst at boss to indicate charging
+      this.boss.getCastOrigin(this._tmp);
+      this.effects.burst(this._tmp, 0x6f3cff, 6, 0.1);
     }
   }
 
@@ -598,6 +651,144 @@ export class VoidWitchAI {
     }
   }
 
+  // ==================== Void Rift ====================
+
+  _beginRiftSkill(player, arena) {
+    const cfg = SKILL_CONFIG[SKILL.RIFT];
+    const phaseCfg = this._phase === 2 ? cfg.phase2 : cfg.phase1;
+
+    // Snapshot player position at execute time — no tracking
+    const snapshot = player.position.clone();
+
+    // Spawn first Rift at player snapshot
+    const pos1 = this._computeRiftPosition(snapshot, arena, cfg.radius);
+    if (pos1) {
+      const rift = this._riftPool.find(r => !r.active);
+      if (rift) {
+        rift.activate(pos1, cfg, 0);
+      }
+    }
+
+    // Phase II: spawn second Rift with stagger
+    if (phaseCfg.count >= 2) {
+      const pos2 = this._computeRiftPosition(snapshot, arena, cfg.radius, pos1);
+      if (pos2) {
+        const rift2 = this._riftPool.find(r => !r.active);
+        if (rift2) {
+          rift2.activate(pos2, cfg, phaseCfg.stagger);
+        }
+      }
+    }
+
+    // Cast flash
+    this.boss.getCastOrigin(this._tmp);
+    this.effects.burst(this._tmp, 0x6f3cff, 8, 0.1);
+  }
+
+  _updateRiftSkill(dt, player, arena) {
+    const cfg = SKILL_CONFIG[SKILL.RIFT];
+    // Rift execution: 0.3~0.5s, then RECOVER
+    if (this._stateT >= 0.4) {
+      this._setState(AI_STATE.RECOVER);
+    }
+  }
+
+  /**
+   * Compute rift placement near player snapshot.
+   * First rift: at player snapshot.
+   * Second rift: random offset 2.5~4.5m from first, must be valid.
+   */
+  _computeRiftPosition(snapshot, arena, radius, firstPos = null) {
+    if (!firstPos) {
+      // First rift: at player snapshot
+      const pos = snapshot.clone();
+      pos.y = 0;
+
+      // Clamp to arena bounds
+      const arenaRadius = arena.radius || 18;
+      const distFromCenter = Math.hypot(pos.x, pos.z);
+      const maxArenaDist = arenaRadius - radius - 0.5;
+      if (distFromCenter > maxArenaDist) {
+        const scale = maxArenaDist / distFromCenter;
+        pos.x *= scale;
+        pos.z *= scale;
+      }
+
+      // Check pillar clearance
+      if (arena.pillars) {
+        for (const pil of arena.pillars) {
+          const d = Math.hypot(pos.x - pil.x, pos.z - pil.z);
+          if (d < pil.r + 0.5) {
+            // Too close to pillar — nudge outward
+            const angle = Math.atan2(pos.z - pil.z, pos.x - pil.x);
+            pos.x = pil.x + Math.cos(angle) * (pil.r + 0.5 + radius);
+            pos.z = pil.z + Math.sin(angle) * (pil.r + 0.5 + radius);
+          }
+        }
+      }
+
+      return pos;
+    }
+
+    // Second rift: random offset from first rift position
+    const maxAttempts = 10;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 2.5 + Math.random() * 2.0; // 2.5~4.5m
+
+      const pos = new THREE.Vector3(
+        firstPos.x + Math.cos(angle) * dist,
+        0,
+        firstPos.z + Math.sin(angle) * dist
+      );
+
+      if (this._isValidHazardPosition(pos, arena, radius)) {
+        return pos;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * AI generic helper: validate hazard placement.
+   * Checks: finite, arena bounds, pillar clearance (center not inside pillar).
+   */
+  _isValidHazardPosition(pos, arena, radius) {
+    if (!isFinite(pos.x) || !isFinite(pos.z)) return false;
+
+    const arenaRadius = arena.radius || 18;
+    const distFromCenter = Math.hypot(pos.x, pos.z);
+    const maxArenaDist = arenaRadius - radius - 0.5;
+    if (distFromCenter > maxArenaDist) return false;
+
+    if (arena.pillars) {
+      for (const pil of arena.pillars) {
+        const d = Math.hypot(pos.x - pil.x, pos.z - pil.z);
+        // Rift center cannot be inside pillar core
+        if (d < pil.r + 0.5) return false;
+      }
+    }
+
+    return true;
+  }
+
+  // ==================== Rift Pool Update ====================
+
+  _updateRifts(dt, player) {
+    for (const rift of this._riftPool) {
+      if (rift.active) {
+        rift.update(dt, player);
+      }
+    }
+  }
+
+  _clearAllRifts() {
+    for (const rift of this._riftPool) {
+      rift.reset();
+    }
+  }
+
   // ==================== Blink Destination ====================
 
   /**
@@ -725,8 +916,6 @@ export class VoidWitchAI {
     this._ownedProjectiles.clear();
   }
 
-  // ==================== Cleanup ====================
-
   /**
    * Universal destroy() contract:
    * - Cancel skills, clean up projectiles
@@ -735,6 +924,13 @@ export class VoidWitchAI {
    */
   destroy() {
     this.cancelCurrentSkill();
+    this._clearAllRifts();
+
+    // Destroy rift pool
+    for (const rift of this._riftPool) {
+      rift.destroy();
+    }
+    this._riftPool = [];
 
     // Null out callbacks
     this.onShake = null;
