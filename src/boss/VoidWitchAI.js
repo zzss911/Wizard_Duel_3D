@@ -1,22 +1,25 @@
 import * as THREE from 'three';
 import { VoidRift } from './VoidRift.js';
+import { VoidClone } from './VoidClone.js';
 
 /**
- * VoidWitchAI —— 虚空女巫 AI (Phase D)
+ * VoidWitchAI —— 虚空女巫 AI (Phase E)
  *
  * State machine:
- *   IDLE → MOVE → CHOOSE → TELEGRAPH → BARRAGE / BLINK / RIFT → RECOVER → IDLE
+ *   IDLE → MOVE → CHOOSE → TELEGRAPH → BARRAGE / BLINK / RIFT / MIRROR → RECOVER → IDLE
  *   PHASE_CHANGE (interrupt)
  *   DEAD
  *
  * Skills:
- *   1. Void Barrage — Fan of void projectiles, no homing (snapshot player pos)
- *   2. Void Blink   — Telegraph marker → vanish → teleport → reappear
- *   3. Void Rift    — Persistent ground hazard, tick-based damage (Phase D)
+ *   1. Void Barrage   — Fan of void projectiles, no homing (snapshot player pos)
+ *   2. Void Blink     — Telegraph marker → vanish → teleport → reappear
+ *   3. Void Rift      — Persistent ground hazard, tick-based damage (Phase D)
+ *   4. Mirror Domain  — 1 real boss + 2 clones, player must identify the real one (Phase E)
  *
  * Skill selection: distance-based weights, no 3 consecutive same skills.
  * Reuses CombatSystem projectile pool. Boss owns its projectiles for cleanup.
  * Rift pool is fixed (RIFT_POOL_SIZE) and pre-created in constructor.
+ * Clone pool is fixed (MIRROR_CLONE_COUNT=2) and pre-created in constructor.
  */
 
 const AI_STATE = {
@@ -27,6 +30,7 @@ const AI_STATE = {
   BARRAGE: 'BARRAGE',
   BLINK: 'BLINK',
   RIFT: 'RIFT',
+  MIRROR: 'MIRROR',
   RECOVER: 'RECOVER',
   PHASE_CHANGE: 'PHASE_CHANGE',
   DEAD: 'DEAD',
@@ -36,9 +40,30 @@ const SKILL = {
   BARRAGE: 'void_barrage',
   BLINK: 'void_blink',
   RIFT: 'void_rift',
+  MIRROR: 'mirror_domain',
 };
 
 const RIFT_POOL_SIZE = 4;
+const MIRROR_CLONE_COUNT = 2;
+
+// Mirror Domain configuration
+const MIRROR_CONFIG = {
+  telegraph: 0.9,
+  setupDuration: 0.40,
+  activeDuration: 4.8,
+  recover: 0.8,
+  cloneCount: 2,
+  fakeCastInterval: 1.2,
+  // Formation search
+  radii: [6, 7, 8],
+  baseRotations: [0, 30, 60, 90, 120, 150],
+  // Slot validation
+  minPlayerDist: 4.5,
+  minSlotSeparation: 3.0,
+  arenaMargin: 2.5,
+  // Early end: if all clones dead after this minimum active time
+  minActiveBeforeEarlyEnd: 1.0,
+};
 
 const SKILL_CONFIG = {
   [SKILL.BARRAGE]: {
@@ -94,6 +119,7 @@ const STATE_ANIM_MAP = {
   [AI_STATE.BARRAGE]: 'IDLE',
   [AI_STATE.BLINK]: 'IDLE',
   [AI_STATE.RIFT]: 'IDLE',
+  [AI_STATE.MIRROR]: 'IDLE',
   [AI_STATE.RECOVER]: 'IDLE',
   [AI_STATE.PHASE_CHANGE]: 'PHASE_CHANGE',
   [AI_STATE.DEAD]: 'DEAD',
@@ -105,6 +131,14 @@ const BLINK_SUB = {
   RELOCATE: 'relocate',
   REAPPEAR: 'reappear',
 };
+
+// Mirror sub-states within the MIRROR state
+const MIRROR_SUB = {
+  SETUP: 'setup',
+  ACTIVE: 'active',
+};
+
+const MIRROR_COOLDOWN = 15.0;
 
 // Deterministic fallback angles (degrees) for blink destination
 const FALLBACK_ANGLES = [90, -90, 135, -135, 180, 0];
@@ -171,6 +205,21 @@ export class VoidWitchAI {
       this._riftPool.push(new VoidRift(this.scene, this.effects));
     }
 
+    // Void Clone pool (fixed size, pre-created) — for Mirror Domain
+    this._clonePool = [];
+    for (let i = 0; i < MIRROR_CLONE_COUNT; i++) {
+      this._clonePool.push(new VoidClone(this.scene));
+    }
+
+    // Mirror Domain state
+    this._mirrorSub = null;
+    this._mirrorSubT = 0;
+    this._mirrorCooldown = 0;
+    this._mirrorGuaranteed = false;
+    this._mirrorSlots = [null, null, null]; // 3 positions: [real, clone0, clone1]
+    this._mirrorRealIndex = 0; // which slot index is the real boss
+    this._mirrorFakeCastT = 0;
+
     // Scratch vectors (avoid per-frame allocation)
     this._tmp = new THREE.Vector3();
     this._tmp2 = new THREE.Vector3();
@@ -200,6 +249,18 @@ export class VoidWitchAI {
     this._ownedProjectiles.clear();
     // Full lifecycle reset — clear all rifts to INACTIVE
     this._clearAllRifts();
+    // Reset all clones to INACTIVE
+    for (const clone of this._clonePool) {
+      clone.reset();
+    }
+    // Reset mirror domain state
+    this._mirrorSub = null;
+    this._mirrorSubT = 0;
+    this._mirrorCooldown = 0;
+    this._mirrorGuaranteed = false;
+    this._mirrorFakeCastT = 0;
+    this._mirrorSlots = [null, null, null];
+    this.boss.setMirrorRealTell?.(false);
     this.boss.cancelBlink?.();
     this.boss.clearInvulnerability?.();
     this.boss.setBossState('IDLE');
@@ -243,6 +304,18 @@ export class VoidWitchAI {
 
     // Update all active Rifts regardless of AI state
     this._updateRifts(dt, player);
+
+    // Update all active Clones regardless of AI state
+    for (const clone of this._clonePool) {
+      if (clone.active || clone._state !== 'INACTIVE') {
+        clone.update(dt, player);
+      }
+    }
+
+    // Mirror cooldown timer
+    if (this._mirrorCooldown > 0) {
+      this._mirrorCooldown = Math.max(0, this._mirrorCooldown - dt);
+    }
 
     switch (this._state) {
       case AI_STATE.IDLE:
@@ -309,8 +382,9 @@ export class VoidWitchAI {
       case AI_STATE.TELEGRAPH:
         b.faceTowards(player.position, dt);
         {
-          const cfg = SKILL_CONFIG[this._currentSkill];
-          const telegraphTime = cfg.telegraph;
+          const telegraphTime = this._currentSkill === SKILL.MIRROR
+            ? MIRROR_CONFIG.telegraph
+            : SKILL_CONFIG[this._currentSkill].telegraph;
           const progress = Math.min(1, this._stateT / telegraphTime);
           // Cast glow ramps up
           let glow = progress;
@@ -335,6 +409,9 @@ export class VoidWitchAI {
             } else if (this._currentSkill === SKILL.RIFT) {
               this._setState(AI_STATE.RIFT);
               this._beginRiftSkill(player, arena);
+            } else if (this._currentSkill === SKILL.MIRROR) {
+              this._setState(AI_STATE.MIRROR);
+              this._beginMirrorSetup(player, arena);
             }
           }
         }
@@ -352,6 +429,10 @@ export class VoidWitchAI {
         this._updateRiftSkill(dt, player, arena);
         break;
 
+      case AI_STATE.MIRROR:
+        this._updateMirror(dt, player, arena);
+        break;
+
       case AI_STATE.RECOVER:
         b.faceTowards(player.position, dt);
         {
@@ -360,8 +441,10 @@ export class VoidWitchAI {
             this._tmp.subVectors(player.position, b.position).setY(0).normalize();
             b.moveIntent.copy(this._tmp).multiplyScalar(0.3);
           }
-          const cfg = SKILL_CONFIG[this._currentSkill];
-          if (this._stateT >= cfg.recover) {
+          const recoverTime = this._currentSkill === SKILL.MIRROR
+            ? MIRROR_CONFIG.recover
+            : SKILL_CONFIG[this._currentSkill].recover;
+          if (this._stateT >= recoverTime) {
             this._setState(AI_STATE.IDLE);
             this._stateT = 0;
           }
@@ -386,6 +469,7 @@ export class VoidWitchAI {
   setPhase2() {
     this._phase = 2;
     this._setState(AI_STATE.IDLE);
+    this._mirrorGuaranteed = true;
     this.boss.setPhase2();
   }
 
@@ -393,7 +477,17 @@ export class VoidWitchAI {
     return this._state === AI_STATE.TELEGRAPH ||
            this._state === AI_STATE.BARRAGE ||
            this._state === AI_STATE.BLINK ||
-           this._state === AI_STATE.RIFT;
+           this._state === AI_STATE.RIFT ||
+           this._state === AI_STATE.MIRROR;
+  }
+
+  /**
+   * Public contract: return additional combatants for CombatSystem.
+   * Inactive clones have dead=true, so CombatSystem skips them automatically.
+   * Controller only knows about "additional combatants", not clones.
+   */
+  getAdditionalCombatants() {
+    return this._clonePool;
   }
 
   // ==================== State Transitions ====================
@@ -425,11 +519,23 @@ export class VoidWitchAI {
   // ==================== Skill Selection ====================
 
   _chooseSkill(dist) {
+    // Phase II guaranteed first Mirror
+    if (this._phase === 2 && this._mirrorGuaranteed) {
+      this._mirrorGuaranteed = false;
+      this._mirrorCooldown = MIRROR_COOLDOWN;
+      return SKILL.MIRROR;
+    }
+
     const available = [SKILL.BARRAGE, SKILL.BLINK, SKILL.RIFT];
 
-    // No 3 consecutive same skills
+    // Mirror Domain: Phase II only, cooldown-gated
+    if (this._phase === 2 && this._mirrorCooldown <= 0) {
+      available.push(SKILL.MIRROR);
+    }
+
+    // No 3 consecutive same skills (Mirror excluded — cooldown already limits it)
     const filtered = available.filter(s => {
-      if (this._lastSkill === s && this._lastSkillRepeat >= 2) return false;
+      if (this._lastSkill === s && this._lastSkillRepeat >= 2 && s !== SKILL.MIRROR) return false;
       return true;
     });
 
@@ -461,6 +567,10 @@ export class VoidWitchAI {
     if (this._phase === 2) {
       weights[SKILL.BLINK] = (weights[SKILL.BLINK] || 0) * 1.2;
       weights[SKILL.RIFT] = (weights[SKILL.RIFT] || 0) * 1.15;
+      // Mirror: moderate weight when available
+      if (weights[SKILL.MIRROR]) {
+        weights[SKILL.MIRROR] = 2.0;
+      }
     }
 
     let total = 0;
@@ -468,7 +578,15 @@ export class VoidWitchAI {
     let r = Math.random() * total;
     for (const s of pool) {
       r -= (weights[s] || 1);
-      if (r <= 0) return s;
+      if (r <= 0) {
+        if (s === SKILL.MIRROR) {
+          this._mirrorCooldown = MIRROR_COOLDOWN;
+        }
+        return s;
+      }
+    }
+    if (pool.includes(SKILL.MIRROR)) {
+      this._mirrorCooldown = MIRROR_COOLDOWN;
     }
     return pool[0];
   }
@@ -499,6 +617,10 @@ export class VoidWitchAI {
       // Rift telegraph: small burst at boss to indicate charging
       this.boss.getCastOrigin(this._tmp);
       this.effects.burst(this._tmp, 0x6f3cff, 6, 0.1);
+    } else if (skill === SKILL.MIRROR) {
+      // Mirror telegraph: core brightens, rings accelerate, ground shimmer
+      this.boss.getCastOrigin(this._tmp);
+      this.effects.burst(this._tmp, 0x6f3cff, 8, 0.1);
     }
   }
 
@@ -792,6 +914,318 @@ export class VoidWitchAI {
     }
   }
 
+  // ==================== Mirror Domain ====================
+
+  /**
+   * Despawn all projectiles owned by this boss.
+   * Verifies ownership so pooled projectiles reused by the player are never touched.
+   */
+  _clearOwnedProjectiles() {
+    for (const p of this._ownedProjectiles) {
+      if (p && p.active && p.owner === this.boss) {
+        p.despawn();
+      }
+    }
+    this._ownedProjectiles.clear();
+  }
+
+  /**
+   * Begin Mirror Domain SETUP sub-state.
+   * Pre-mirror: clear owned projectiles + rifts (NOT cancelCurrentSkill).
+   * Compute 3-slot formation around player snapshot. If no valid formation,
+   * safe-cancel to RECOVER.
+   */
+  _beginMirrorSetup(player, arena) {
+    // Pre-mirror cleanup: despawn boss projectiles + clear rifts
+    this._clearOwnedProjectiles();
+    this._clearAllRifts();
+
+    // Compute formation around player snapshot
+    const slots = this._computeMirrorFormation(player, arena);
+    if (!slots) {
+      // Safe cancel — no valid formation, go to recover
+      this._setState(AI_STATE.RECOVER);
+      return;
+    }
+
+    // Randomly assign which slot is the real boss
+    this._mirrorRealIndex = Math.floor(Math.random() * 3);
+    this._mirrorSlots = slots;
+
+    // Move real boss to its slot
+    const realPos = slots[this._mirrorRealIndex];
+    this.boss.teleportTo(realPos);
+
+    // Activate clones at the other 2 slots
+    let cloneIdx = 0;
+    for (let i = 0; i < 3; i++) {
+      if (i === this._mirrorRealIndex) continue;
+      if (cloneIdx >= this._clonePool.length) break;
+      const clone = this._clonePool[cloneIdx];
+      const slot = slots[i];
+      // Face player
+      const facing = Math.atan2(
+        player.position.x - slot.x,
+        player.position.z - slot.z
+      );
+      clone.activate(slot, facing, MIRROR_CONFIG.activeDuration);
+      cloneIdx++;
+    }
+
+    // Activate real tell on boss
+    this.boss.setMirrorRealTell(true);
+
+    // Boss invulnerable during SETUP (brief, before ACTIVE)
+    this.boss.setInvulnerable(MIRROR_CONFIG.setupDuration);
+
+    this._mirrorSub = MIRROR_SUB.SETUP;
+    this._mirrorSubT = 0;
+    this._mirrorFakeCastT = 0;
+
+    // Burst at all 3 positions for the reveal
+    for (const slot of slots) {
+      this.effects.burst(
+        this._tmp.set(slot.x, 1.0, slot.z),
+        0x9a6cff, 10, 0.12
+      );
+    }
+    if (this.onShake) this.onShake(0.3);
+  }
+
+  /**
+   * Compute 3-slot triangular formation around player snapshot.
+   * 3 slots at 120° apart, radius from MIRROR_CONFIG.radii.
+   * Random base rotation + small jitter.
+   *
+   * Validation per slot: finite, inside arena, ≥4.5m from player,
+   * no pillar overlap, ≥3.0m separation between slots.
+   *
+   * Returns array of 3 Vector3 positions, or null if no valid formation.
+   */
+  _computeMirrorFormation(player, arena) {
+    const playerPos = player.position;
+    const arenaRadius = arena.radius || 18;
+    const bossRadius = this.boss.radius || 0.8;
+
+    // Try different radii and base rotations
+    for (const radius of MIRROR_CONFIG.radii) {
+      // Randomized base rotation first
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const baseRot = Math.random() * Math.PI * 2;
+        const slots = this._generateSlots(playerPos, radius, baseRot);
+
+        if (this._validateFormation(slots, playerPos, arena, arenaRadius, bossRadius)) {
+          return slots;
+        }
+      }
+
+      // Deterministic fallback rotations
+      for (const rotDeg of MIRROR_CONFIG.baseRotations) {
+        const baseRot = THREE.MathUtils.degToRad(rotDeg);
+        const slots = this._generateSlots(playerPos, radius, baseRot);
+
+        if (this._validateFormation(slots, playerPos, arena, arenaRadius, bossRadius)) {
+          return slots;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Generate 3 slots at 120° apart around playerPos.
+   */
+  _generateSlots(playerPos, radius, baseRot) {
+    const slots = [];
+    for (let i = 0; i < 3; i++) {
+      const angle = baseRot + (i * Math.PI * 2 / 3);
+      // Small per-slot jitter
+      const r = radius + (Math.random() - 0.5) * 1.0;
+      slots.push(new THREE.Vector3(
+        playerPos.x + Math.cos(angle) * r,
+        0,
+        playerPos.z + Math.sin(angle) * r
+      ));
+    }
+    return slots;
+  }
+
+  /**
+   * Validate all 3 slots:
+   * - Finite coordinates
+   * - Inside arena bounds (with margin)
+   * - ≥ minPlayerDist from player
+   * - No pillar overlap
+   * - ≥ minSlotSeparation between each pair
+   */
+  _validateFormation(slots, playerPos, arena, arenaRadius, bossRadius) {
+    for (const slot of slots) {
+      if (!isFinite(slot.x) || !isFinite(slot.z)) return false;
+
+      // Arena bounds
+      const distFromCenter = Math.hypot(slot.x, slot.z);
+      const maxArenaDist = arenaRadius - bossRadius - MIRROR_CONFIG.arenaMargin;
+      if (distFromCenter > maxArenaDist) return false;
+
+      // Min player distance
+      const distToPlayer = Math.hypot(slot.x - playerPos.x, slot.z - playerPos.z);
+      if (distToPlayer < MIRROR_CONFIG.minPlayerDist) return false;
+
+      // Pillar clearance
+      if (arena.pillars) {
+        for (const pil of arena.pillars) {
+          const d = Math.hypot(slot.x - pil.x, slot.z - pil.z);
+          if (d < pil.r + bossRadius + 1.0) return false;
+        }
+      }
+    }
+
+    // Slot separation
+    for (let i = 0; i < 3; i++) {
+      for (let j = i + 1; j < 3; j++) {
+        const d = slots[i].distanceTo(slots[j]);
+        if (d < MIRROR_CONFIG.minSlotSeparation) return false;
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Update Mirror Domain state machine.
+   * SETUP → ACTIVE → (RECOVER handled by main state machine)
+   */
+  _updateMirror(dt, player, arena) {
+    const b = this.boss;
+    this._mirrorSubT += dt;
+
+    // Face player
+    b.faceTowards(player.position, dt);
+
+    // Decay boss cast glow from fake casts
+    const currentGlow = b._castGlow || 0;
+    if (currentGlow > 0) {
+      b.setCastGlow(Math.max(0, currentGlow - dt * 2));
+    }
+
+    switch (this._mirrorSub) {
+      case MIRROR_SUB.SETUP: {
+        // Brief setup — clones fade in, boss repositions
+        if (this._mirrorSubT >= MIRROR_CONFIG.setupDuration) {
+          // Enter ACTIVE
+          this._mirrorSub = MIRROR_SUB.ACTIVE;
+          this._mirrorSubT = 0;
+          this._mirrorFakeCastT = 0;
+
+          // Clear invulnerability — boss is damageable during ACTIVE
+          b.clearInvulnerability?.();
+
+          // Initial fake cast on all targets
+          this._triggerFakeCast(player);
+        }
+        break;
+      }
+
+      case MIRROR_SUB.ACTIVE: {
+        // Fake cast interval
+        this._mirrorFakeCastT -= dt;
+        if (this._mirrorFakeCastT <= 0) {
+          this._mirrorFakeCastT += MIRROR_CONFIG.fakeCastInterval;
+          this._triggerFakeCast(player);
+        }
+
+        // Check early end: all clones dead after minActiveBeforeEarlyEnd
+        if (this._mirrorSubT >= MIRROR_CONFIG.minActiveBeforeEarlyEnd) {
+          let allClonesDead = true;
+          for (const clone of this._clonePool) {
+            if (clone.active) {
+              allClonesDead = false;
+              break;
+            }
+          }
+          if (allClonesDead) {
+            this._endMirror();
+            return;
+          }
+        }
+
+        // Full duration end
+        if (this._mirrorSubT >= MIRROR_CONFIG.activeDuration) {
+          this._endMirror();
+        }
+        break;
+      }
+    }
+  }
+
+  /**
+   * Trigger fake cast visual on all 3 targets (boss + clones).
+   * No damaging projectiles — just visual cast glow + small burst.
+   */
+  _triggerFakeCast(player) {
+    // Real boss fake cast
+    this.boss.setCastGlow(0.6);
+    this.boss.getCastOrigin(this._tmp);
+    this.effects.burst(this._tmp, 0x6f3cff, 4, 0.08);
+    // Decay cast glow over time (handled by next frame's update)
+
+    // Clones fake cast
+    for (const clone of this._clonePool) {
+      if (clone.active) {
+        clone.setFakeCastProgress(1.0);
+        clone.getCastOrigin(this._tmp);
+        this.effects.burst(this._tmp, 0x6f3cff, 4, 0.08);
+      }
+    }
+  }
+
+  /**
+   * End Mirror Domain — clean up clones, tell, go to RECOVER.
+   */
+  _endMirror() {
+    // Reset all clones
+    for (const clone of this._clonePool) {
+      if (clone.active) {
+        // Burst on dissolve
+        this.effects.burst(
+          this._tmp.set(clone.position.x, 1.0, clone.position.z),
+          0x9a6cff, 8, 0.1
+        );
+      }
+      clone.reset();
+    }
+
+    // Clear real tell
+    this.boss.setMirrorRealTell(false);
+    this.boss.setCastGlow(0);
+
+    // Clear invulnerability if any
+    this.boss.clearInvulnerability?.();
+
+    this._mirrorSub = null;
+    this._mirrorSlots = [null, null, null];
+
+    this._setState(AI_STATE.RECOVER);
+  }
+
+  /**
+   * Emergency cancel of Mirror Domain (for interrupts).
+   * Resets clones, tell, invulnerability, visuals.
+   */
+  _cancelMirror() {
+    for (const clone of this._clonePool) {
+      clone.reset();
+    }
+    this.boss.setMirrorRealTell?.(false);
+    this.boss.setCastGlow(0);
+    this.boss.clearInvulnerability?.();
+    this._mirrorSub = null;
+    this._mirrorSubT = 0;
+    this._mirrorFakeCastT = 0;
+    this._mirrorSlots = [null, null, null];
+  }
+
   // ==================== Blink Destination ====================
 
   /**
@@ -899,6 +1333,7 @@ export class VoidWitchAI {
    *   - Blink markers / invulnerability
    *   - Barrage firing state + owned projectiles
    *   - Rift pool (all rifts reset to INACTIVE, visuals hidden)
+   *   - Mirror Domain clones + real tell (Phase E)
    *
    * Idempotent: safe to call multiple times.
    */
@@ -909,6 +1344,9 @@ export class VoidWitchAI {
     this.boss.setCastGlow(0);
     this.boss.hideBlinkMarker?.();
     this._blinkSub = null;
+
+    // Cancel mirror domain (clones, tell, invulnerability)
+    this._cancelMirror();
 
     // Cancel barrage
     this._barrageShotsFired = 0;
@@ -935,7 +1373,7 @@ export class VoidWitchAI {
    * - Does NOT call boss.destroy() — the controller handles that separately
    */
   destroy() {
-    // cancelCurrentSkill clears rifts + projectiles + blink state
+    // cancelCurrentSkill clears rifts + projectiles + blink state + mirror
     this.cancelCurrentSkill();
 
     // Destroy rift pool (dispose geometry + materials)
@@ -943,6 +1381,12 @@ export class VoidWitchAI {
       rift.destroy();
     }
     this._riftPool = [];
+
+    // Destroy clone pool (dispose geometry + materials)
+    for (const clone of this._clonePool) {
+      clone.destroy();
+    }
+    this._clonePool = [];
 
     // Null out callbacks
     this.onShake = null;

@@ -606,7 +606,16 @@ export class BossBattleController {
   }
 
   getCombatants() {
-    return [this.player, this.boss];
+    const result = [this.player, this.boss];
+    if (this.ai?.getAdditionalCombatants) {
+      const extras = this.ai.getAdditionalCombatants();
+      if (extras) {
+        for (const c of extras) {
+          if (c) result.push(c);
+        }
+      }
+    }
+    return result;
   }
 
   /** 只有 PHASE1 / PHASE2 允许玩家操作 */

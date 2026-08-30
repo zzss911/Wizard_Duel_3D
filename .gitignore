@@ -26,3 +26,6 @@ assets/models/player_rigged_v02_backup.glb
 assets/models/player_rigged_v03.glb
 uploads/
 __pw_browser_take_screenshot_*.png
+
+# Build output
+dist/

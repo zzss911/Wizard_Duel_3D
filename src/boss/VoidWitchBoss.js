@@ -116,6 +116,9 @@ export class VoidWitchBoss {
     this._blinkMarker = null;
     this._blinkMarkerMat = null;
 
+    // Mirror real tell state
+    this._mirrorTellActive = false;
+
     // Build everything
     this._buildGroup();
     this._buildEffects();
@@ -406,18 +409,14 @@ export class VoidWitchBoss {
     });
     this._ownedMaterials.add(this.fogMat);
 
+    // Set position attribute on geometry BEFORE creating Points
+    geo.setAttribute('position', new THREE.BufferAttribute(this._fogPos, 3));
+
     this.fog = new THREE.Points(geo, this.fogMat);
     this.fog.frustumCulled = false;
     this.fog.visible = false;
 
-    // Set initial positions
-    const posAttr = this.fog.geometry.attributes.position;
-    for (let i = 0; i < n; i++) {
-      posAttr.array[i * 3] = this._fogPos[i * 3];
-      posAttr.array[i * 3 + 1] = this._fogPos[i * 3 + 1];
-      posAttr.array[i * 3 + 2] = this._fogPos[i * 3 + 2];
-    }
-    posAttr.needsUpdate = true;
+    // Positions already set in _fogPos array above
     this._fogN = n;
 
     this.scene.add(this.fog);
@@ -518,6 +517,7 @@ export class VoidWitchBoss {
     this._ringRotation = 0;
     this._phaseChangeT = 0;
     this._hitFlashT = 0;
+    this._mirrorTellActive = false;
     this._currentAnim = 'Idle';
     this.moveIntent.set(0, 0, 0);
     // Cancel any in-progress blink
@@ -588,6 +588,31 @@ export class VoidWitchBoss {
     if (this._coreLight) this._coreLight.intensity = 4;
     if (this._arcaneRing1Mat) this._arcaneRing1Mat.opacity = 0.8;
     if (this._arcaneRing2Mat) this._arcaneRing2Mat.opacity = 0.7;
+  }
+
+  /**
+   * Subtle "real tell" for Mirror Domain.
+   * When active, the real boss is slightly brighter (core light + ring opacity)
+   * so observant players can distinguish it from clones.
+   * Uses independent multipliers that don't interfere with Hit > Slow > Original
+   * emissive priority — only affects core light intensity and ring material opacity.
+   * @param {boolean} active
+   */
+  setMirrorRealTell(active) {
+    this._mirrorTellActive = active;
+    if (!active) {
+      // Restore to phase baseline
+      if (this._coreLight) {
+        this._coreLight.intensity = this.phase2 ? 4 : 2;
+      }
+      if (this._arcaneRing1Mat) {
+        this._arcaneRing1Mat.opacity = this.phase2 ? 0.8 : 0.6;
+      }
+      if (this._arcaneRing2Mat) {
+        this._arcaneRing2Mat.opacity = this.phase2 ? 0.7 : 0.5;
+      }
+    }
+    // When active, the update() loop applies the boosted values
   }
 
   // ==================== Blink Visual API ====================
@@ -757,13 +782,22 @@ export class VoidWitchBoss {
       this._arcaneRing2.rotation.y = this._ringRotation * 0.7;
     }
 
+    // --- Mirror real tell: slightly brighter secondary ring ---
+    if (this._mirrorTellActive) {
+      if (this._arcaneRing2Mat) {
+        this._arcaneRing2Mat.opacity = (this.phase2 ? 0.7 : 0.5) + 0.08;
+      }
+    }
+
     // --- Void core pulsing ---
     if (this._voidCoreMat) {
       const pulse = 0.5 + Math.sin(this._idleTime * 3) * 0.2 + this._castGlow * 0.3;
       this._voidCoreMat.opacity = pulse;
     }
     if (this._coreLight) {
-      this._coreLight.intensity = 2 + this._castGlow * 3;
+      // Mirror real tell: ~12% brighter core light
+      const tellBoost = this._mirrorTellActive ? 0.5 : 0;
+      this._coreLight.intensity = 2 + this._castGlow * 3 + tellBoost;
     }
 
     // --- Floating orb bobbing ---

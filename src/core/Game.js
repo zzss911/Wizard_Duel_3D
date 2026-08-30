@@ -123,7 +123,9 @@ export class Game {
 
     // 命中回调
     this.combat.onDamage = (worldPos, amount, target, skillType) => {
-      this.hud.spawnDamageNumber(worldPos, amount, this.camera, skillType);
+      if (!target?.suppressDamageNumber) {
+        this.hud.spawnDamageNumber(worldPos, amount, this.camera, skillType);
+      }
       // 普攻命中敌人时微震（不叠加 explosion 的强震）
       if (skillType === 'basic' && !target?.isPlayer && !target?.isTarget) {
         this.addShake(0.15);
