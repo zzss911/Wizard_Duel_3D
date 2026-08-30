@@ -1,24 +1,88 @@
 import * as THREE from 'three';
 
 /**
- * VoidWitchAI —— 虚空女巫 AI (Phase B skeleton)
+ * VoidWitchAI —— 虚空女巫 AI (Phase C)
  *
  * State machine:
- *   IDLE → MOVE → IDLE → ...
- *   PHASE_CHANGE (interrupt, set by triggerPhaseChange)
- *   DEAD (set when boss.dead becomes true)
+ *   IDLE → MOVE → CHOOSE → TELEGRAPH → BARRAGE / BLINK → RECOVER → IDLE
+ *   PHASE_CHANGE (interrupt)
+ *   DEAD
  *
- * Lightweight movement, no real attacks in Phase B.
- * Maintains 7-11m distance from player, occasional direction changes.
+ * Skills:
+ *   1. Void Barrage — Fan of void projectiles, no homing (snapshot player pos)
+ *   2. Void Blink   — Telegraph marker → vanish → teleport → reappear
  *
- * Universal destroy() contract: clean up all timers, callbacks, and resources.
+ * Skill selection: distance-based weights, no 3 consecutive same skills.
+ * Reuses CombatSystem projectile pool. Boss owns its projectiles for cleanup.
  */
 
 const AI_STATE = {
   IDLE: 'IDLE',
   MOVE: 'MOVE',
+  CHOOSE: 'CHOOSE',
+  TELEGRAPH: 'TELEGRAPH',
+  BARRAGE: 'BARRAGE',
+  BLINK: 'BLINK',
+  RECOVER: 'RECOVER',
   PHASE_CHANGE: 'PHASE_CHANGE',
   DEAD: 'DEAD',
+};
+
+const SKILL = {
+  BARRAGE: 'void_barrage',
+  BLINK: 'void_blink',
+};
+
+const SKILL_CONFIG = {
+  [SKILL.BARRAGE]: {
+    telegraph: 0.85,
+    recover: 1.0,
+    damage: 8,
+    projectileSpeed: 16,
+    projectileTint: 0x6f3cff,
+    impactTint: 0x9a6cff,
+    shotInterval: 0.14,
+    // Phase 1: 3 projectiles, fan [-8°, 0°, +8°]
+    phase1: { count: 3, fan: [-8, 0, 8] },
+    // Phase 2: 5 projectiles, fan [-14, -7, 0, 7, 14]
+    phase2: { count: 5, fan: [-14, -7, 0, 7, 14] },
+  },
+  [SKILL.BLINK]: {
+    telegraph: 0.62,
+    recover: 0.7,
+    // Sub-phases during the BLINK state
+    vanishDuration: 0.15,
+    relocateDuration: 0.1,
+    reappearDuration: 0.2,
+    invulnDuration: 0.28,
+    // Destination constraints
+    minDist: 4.5,
+    maxDist: 9.0,
+    angleSpread: 0, // set per-phase
+    phase1: { angles: [-60, 60] },
+    phase2: { angles: [-120, -60, 60, 120] },
+  },
+};
+
+// Boss animation state names for setBossState
+const STATE_ANIM_MAP = {
+  [AI_STATE.IDLE]: 'IDLE',
+  [AI_STATE.MOVE]: 'IDLE',
+  [AI_STATE.CHOOSE]: 'IDLE',
+  [AI_STATE.TELEGRAPH]: 'IDLE',
+  [AI_STATE.BARRAGE]: 'IDLE',
+  [AI_STATE.BLINK]: 'IDLE',
+  [AI_STATE.RECOVER]: 'IDLE',
+  [AI_STATE.PHASE_CHANGE]: 'PHASE_CHANGE',
+  [AI_STATE.DEAD]: 'DEAD',
+};
+
+// Blink sub-states within the BLINK state
+const BLINK_SUB = {
+  TELEGRAPH: 'telegraph',
+  VANISH: 'vanish',
+  RELOCATE: 'relocate',
+  REAPPEAR: 'reappear',
 };
 
 export class VoidWitchAI {
@@ -54,7 +118,30 @@ export class VoidWitchAI {
     this._moveTimer = 0;
     this._moveDuration = 0;
 
-    // Scratch vector (avoid per-frame allocation)
+    // Skill selection
+    this._currentSkill = null;
+    this.attackHistory = [];
+    this._lastSkill = null;
+    this._lastSkillRepeat = 0;
+
+    // Barrage state
+    this._barrageShotsFired = 0;
+    this._barrageShotTimer = 0;
+    this._barrageDirections = [];
+    this._barrageCount = 0;
+
+    // Blink state
+    this._blinkSub = null;
+    this._blinkSubT = 0;
+    this._blinkDest = new THREE.Vector3();
+    this._blinkInvulnT = 0;
+
+    // Projectile ownership — track for cleanup
+    this._ownedProjectiles = new Set();
+
+    // Scratch vectors (avoid per-frame allocation)
+    this._tmp = new THREE.Vector3();
+    this._tmp2 = new THREE.Vector3();
     this._tmpToPlayer = new THREE.Vector3();
 
     // Set boss initial state
@@ -69,6 +156,19 @@ export class VoidWitchAI {
     this._phase = 1;
     this._moveTimer = 0;
     this._moveDuration = 0;
+    this._currentSkill = null;
+    this.attackHistory = [];
+    this._lastSkill = null;
+    this._lastSkillRepeat = 0;
+    this._barrageShotsFired = 0;
+    this._barrageShotTimer = 0;
+    this._barrageDirections = [];
+    this._barrageCount = 0;
+    this._blinkSub = null;
+    this._blinkSubT = 0;
+    this._blinkInvulnT = 0;
+    this._ownedProjectiles.clear();
+    this.boss.cancelBlink?.();
     this.boss.setBossState('IDLE');
   }
 
@@ -79,23 +179,45 @@ export class VoidWitchAI {
     // --- Death check ---
     if (b.dead) {
       if (this._state !== AI_STATE.DEAD) {
-        this._state = AI_STATE.DEAD;
-        b.setBossState('DEAD');
+        this._cancelCurrentSkill();
+        this._setState(AI_STATE.DEAD);
       }
       return;
     }
 
     // --- Player dead check ---
     if (player.dead) {
+      // Stop new skills, stop firing, but don't despawn projectiles
+      if (this._state === AI_STATE.TELEGRAPH ||
+          this._state === AI_STATE.BARRAGE ||
+          this._state === AI_STATE.BLINK) {
+        this._cancelCurrentSkill();
+        this._setState(AI_STATE.IDLE);
+        this._stateT = 0;
+      }
       return;
     }
 
     this._stateT += dt;
 
+    // Tick blink invulnerability
+    if (this._blinkInvulnT > 0) {
+      this._blinkInvulnT = Math.max(0, this._blinkInvulnT - dt);
+    }
+
+    // Clean up dead projectiles from ownership set
+    if (this._ownedProjectiles.size > 0) {
+      for (const p of this._ownedProjectiles) {
+        if (!p.active) {
+          this._ownedProjectiles.delete(p);
+        }
+      }
+    }
+
     switch (this._state) {
       case AI_STATE.IDLE:
         b.faceTowards(player.position, dt);
-        if (this._stateT >= 0.5) {
+        if (this._stateT >= 0.4) {
           this._setState(AI_STATE.MOVE);
         }
         break;
@@ -109,7 +231,6 @@ export class VoidWitchAI {
         const dist = toPlayer.length();
 
         if (dist < 0.01) {
-          // Player on top of boss — pick random direction
           const a = Math.random() * Math.PI * 2;
           this._moveDir.set(Math.cos(a), 0, Math.sin(a));
         } else if (dist < 7) {
@@ -121,7 +242,6 @@ export class VoidWitchAI {
         } else {
           // Sweet spot — strafe perpendicular
           this._moveDir.set(-toPlayer.z, 0, toPlayer.x).normalize();
-          // Occasionally flip strafe direction
           if (Math.random() < 0.01) this._moveDir.negate();
         }
 
@@ -129,13 +249,89 @@ export class VoidWitchAI {
 
         this._moveTimer += dt;
         if (this._moveTimer >= this._moveDuration) {
-          this._setState(AI_STATE.IDLE);
+          this._setState(AI_STATE.CHOOSE);
         }
         break;
       }
 
+      case AI_STATE.CHOOSE: {
+        const dist = b.position.distanceTo(player.position);
+        const skill = this._chooseSkill(dist);
+        this._currentSkill = skill;
+        this.attackHistory.push(skill);
+        if (this.attackHistory.length > 6) this.attackHistory.shift();
+
+        // Track consecutive repeats
+        if (skill === this._lastSkill) {
+          this._lastSkillRepeat++;
+        } else {
+          this._lastSkill = skill;
+          this._lastSkillRepeat = 1;
+        }
+
+        this._setState(AI_STATE.TELEGRAPH);
+        this._beginTelegraph(skill, player, arena);
+        // Notify controller for skill name display
+        if (this.onSkillTelegraph) this.onSkillTelegraph(skill);
+        break;
+      }
+
+      case AI_STATE.TELEGRAPH:
+        b.faceTowards(player.position, dt);
+        {
+          const cfg = SKILL_CONFIG[this._currentSkill];
+          const telegraphTime = cfg.telegraph;
+          const progress = Math.min(1, this._stateT / telegraphTime);
+          // Cast glow ramps up
+          let glow = progress;
+          if (this._stateT > telegraphTime - 0.25) {
+            glow += Math.sin((telegraphTime - this._stateT) * 30) * 0.2;
+          }
+          b.setCastGlow(Math.min(1, Math.max(0, glow)));
+
+          // Blink: ramp up marker opacity
+          if (this._currentSkill === SKILL.BLINK && b._blinkMarker) {
+            b.setBlinkMarkerOpacity(progress * 0.8);
+          }
+
+          if (this._stateT >= telegraphTime) {
+            b.setCastGlow(0);
+            if (this._currentSkill === SKILL.BARRAGE) {
+              this._setState(AI_STATE.BARRAGE);
+              this._beginBarrage(player);
+            } else if (this._currentSkill === SKILL.BLINK) {
+              this._setState(AI_STATE.BLINK);
+              this._beginBlinkExecute();
+            }
+          }
+        }
+        break;
+
+      case AI_STATE.BARRAGE:
+        this._updateBarrage(dt, player);
+        break;
+
+      case AI_STATE.BLINK:
+        this._updateBlink(dt, player, arena);
+        break;
+
+      case AI_STATE.RECOVER:
+        b.faceTowards(player.position, dt);
+        {
+          const dist = b.position.distanceTo(player.position);
+          if (dist > 10) {
+            this._tmp.subVectors(player.position, b.position).setY(0).normalize();
+            b.moveIntent.copy(this._tmp).multiplyScalar(0.3);
+          }
+          const cfg = SKILL_CONFIG[this._currentSkill];
+          if (this._stateT >= cfg.recover) {
+            this._setState(AI_STATE.IDLE);
+            this._stateT = 0;
+          }
+        }
+        break;
+
       case AI_STATE.PHASE_CHANGE:
-        // Phase change handled by controller — just wait
         b.faceTowards(player.position, dt);
         break;
     }
@@ -143,6 +339,7 @@ export class VoidWitchAI {
 
   triggerPhaseChange() {
     if (this._state === AI_STATE.PHASE_CHANGE || this._state === AI_STATE.DEAD) return;
+    this._cancelCurrentSkill();
     this._setState(AI_STATE.PHASE_CHANGE);
     this.boss.setInvulnerable(3.0);
   }
@@ -154,7 +351,9 @@ export class VoidWitchAI {
   }
 
   isAttacking() {
-    return false; // No attacks in Phase B
+    return this._state === AI_STATE.TELEGRAPH ||
+           this._state === AI_STATE.BARRAGE ||
+           this._state === AI_STATE.BLINK;
   }
 
   // ==================== State Transitions ====================
@@ -163,31 +362,361 @@ export class VoidWitchAI {
     this._state = newState;
     this._stateT = 0;
 
+    const animState = STATE_ANIM_MAP[newState];
+    if (animState) {
+      this.boss.setBossState(animState);
+    }
+
     switch (newState) {
       case AI_STATE.IDLE:
-        this.boss.setBossState('IDLE');
+        this.boss.setCastGlow(0);
         break;
       case AI_STATE.MOVE:
-        this._moveDuration = 1.5 + Math.random() * 1.5;
+        this._moveDuration = 1.2 + Math.random() * 1.0;
         this._moveTimer = 0;
         break;
       case AI_STATE.PHASE_CHANGE:
-        this.boss.setBossState('PHASE_CHANGE');
         break;
       case AI_STATE.DEAD:
-        this.boss.setBossState('DEAD');
         break;
     }
+  }
+
+  // ==================== Skill Selection ====================
+
+  _chooseSkill(dist) {
+    const available = [SKILL.BARRAGE, SKILL.BLINK];
+
+    // No 3 consecutive same skills
+    const filtered = available.filter(s => {
+      if (this._lastSkill === s && this._lastSkillRepeat >= 2) return false;
+      return true;
+    });
+
+    // Fallback: if all filtered out, just use the other skill
+    const pool = filtered.length > 0 ? filtered : available;
+
+    const weights = {};
+    for (const s of pool) weights[s] = 1;
+
+    // Distance-based weighting
+    if (dist > 9) {
+      // Far: prefer Barrage
+      weights[SKILL.BARRAGE] = 3;
+      weights[SKILL.BLINK] = 1;
+    } else if (dist < 6) {
+      // Close: prefer Blink (reposition away)
+      weights[SKILL.BARRAGE] = 1;
+      weights[SKILL.BLINK] = 3;
+    } else {
+      // Mid range: balanced
+      weights[SKILL.BARRAGE] = 2;
+      weights[SKILL.BLINK] = 2;
+    }
+
+    // Phase 2: slight preference for Blink (more aggressive repositioning)
+    if (this._phase === 2) {
+      weights[SKILL.BLINK] = (weights[SKILL.BLINK] || 0) * 1.2;
+    }
+
+    let total = 0;
+    for (const s of pool) total += weights[s] || 1;
+    let r = Math.random() * total;
+    for (const s of pool) {
+      r -= (weights[s] || 1);
+      if (r <= 0) return s;
+    }
+    return pool[0];
+  }
+
+  // ==================== Telegraph ====================
+
+  _beginTelegraph(skill, player, arena) {
+    if (skill === SKILL.BARRAGE) {
+      // Barrage telegraph: cast glow ramp (handled in TELEGRAPH state)
+      // Small burst at boss to indicate charging
+      this.boss.getCastOrigin(this._tmp);
+      this.effects.burst(this._tmp, 0x6f3cff, 6, 0.1);
+    } else if (skill === SKILL.BLINK) {
+      // Compute destination and show marker
+      const dest = this._computeBlinkDestination(player, arena);
+      this._blinkDest.copy(dest);
+      this.boss.beginBlink();
+      this.boss.showBlinkMarker(dest);
+    }
+  }
+
+  // ==================== Void Barrage ====================
+
+  _beginBarrage(player) {
+    const cfg = SKILL_CONFIG[SKILL.BARRAGE];
+    const pattern = this._phase === 2 ? cfg.phase2 : cfg.phase1;
+
+    // Snapshot player position at execute time — no homing
+    this._tmp.copy(player.headPosition);
+    this.boss.getCastOrigin(this._tmp2);
+    // Direction: from cast origin → player (tmp - tmp2 = player - boss)
+    const baseDir = this._tmp.sub(this._tmp2).normalize();
+
+    // Precompute fan directions
+    this._barrageDirections = [];
+    for (let i = 0; i < pattern.fan.length; i++) {
+      const angleDeg = pattern.fan[i];
+      const angleRad = THREE.MathUtils.degToRad(angleDeg);
+      const dir = baseDir.clone();
+      // Rotate around Y axis
+      const cos = Math.cos(angleRad);
+      const sin = Math.sin(angleRad);
+      const nx = dir.x * cos - dir.z * sin;
+      const nz = dir.x * sin + dir.z * cos;
+      dir.set(nx, dir.y, nz).normalize();
+      this._barrageDirections.push(dir);
+    }
+
+    this._barrageCount = pattern.count;
+    this._barrageShotsFired = 0;
+    this._barrageShotTimer = 0;
+
+    // Cast flash
+    this.boss.getCastOrigin(this._tmp);
+    this.effects.burst(this._tmp, 0x6f3cff, 10, 0.12);
+    if (this.onShake) this.onShake(0.2);
+  }
+
+  _updateBarrage(dt, player) {
+    const cfg = SKILL_CONFIG[SKILL.BARRAGE];
+
+    if (this._barrageShotsFired < this._barrageCount) {
+      this._barrageShotTimer -= dt;
+      if (this._barrageShotTimer <= 0) {
+        this._fireBarrageProjectile(this._barrageShotsFired);
+        this._barrageShotsFired++;
+        this._barrageShotTimer = cfg.shotInterval;
+      }
+    } else {
+      // All shots fired — go to recover
+      this._setState(AI_STATE.RECOVER);
+    }
+  }
+
+  _fireBarrageProjectile(index) {
+    if (index >= this._barrageDirections.length) return;
+    const cfg = SKILL_CONFIG[SKILL.BARRAGE];
+    const dir = this._barrageDirections[index];
+
+    const p = this.combat._spawn(this.boss, dir, {
+      speed: cfg.projectileSpeed,
+      damage: cfg.damage,
+      tint: cfg.projectileTint,
+      scale: 1.0,
+      power: 1,
+      skillType: 'void_bolt',
+      impactTint: cfg.impactTint,
+    });
+
+    if (p) {
+      this._ownedProjectiles.add(p);
+      // Small cast burst per shot
+      this.boss.getCastOrigin(this._tmp);
+      this.effects.burst(this._tmp, 0x9a6cff, 4, 0.08);
+    }
+    // If pool full (p === null), we skip this shot — safe degradation
+  }
+
+  // ==================== Void Blink ====================
+
+  _beginBlinkExecute() {
+    const cfg = SKILL_CONFIG[SKILL.BLINK];
+    this._blinkSub = BLINK_SUB.VANISH;
+    this._blinkSubT = 0;
+    this.boss.beginBlink();
+  }
+
+  _updateBlink(dt, player, arena) {
+    const cfg = SKILL_CONFIG[SKILL.BLINK];
+    this._blinkSubT += dt;
+
+    switch (this._blinkSub) {
+      case BLINK_SUB.VANISH: {
+        const progress = Math.min(1, this._blinkSubT / cfg.vanishDuration);
+        this.boss.setBlinkVanish(progress);
+
+        // Burst at departure point
+        if (this._blinkSubT >= cfg.vanishDuration) {
+          this.effects.burst(this.boss.position.clone().setY(1.0), 0x6f3cff, 14, 0.12);
+          this._blinkSub = BLINK_SUB.RELOCATE;
+          this._blinkSubT = 0;
+        }
+        break;
+      }
+
+      case BLINK_SUB.RELOCATE: {
+        // Instant teleport
+        this.boss.teleportTo(this._blinkDest);
+
+        // Grant brief invulnerability
+        this._blinkInvulnT = cfg.invulnDuration;
+        this.boss.setInvulnerable(cfg.invulnDuration);
+
+        // Hide marker (boss is now there)
+        this.boss.hideBlinkMarker();
+
+        // Burst at arrival point
+        this.effects.burst(this.boss.position.clone().setY(1.0), 0x9a6cff, 10, 0.1);
+
+        this._blinkSub = BLINK_SUB.REAPPEAR;
+        this._blinkSubT = 0;
+        break;
+      }
+
+      case BLINK_SUB.REAPPEAR: {
+        const progress = Math.min(1, this._blinkSubT / cfg.reappearDuration);
+        // Fade back in — scale from small to 1
+        if (this.boss.visualRoot) {
+          this.boss.visualRoot.scale.setScalar(Math.max(0.01, progress));
+        }
+        if (this.boss._voidCoreMat) {
+          this.boss._voidCoreMat.opacity = progress * 0.8;
+        }
+
+        if (this._blinkSubT >= cfg.reappearDuration) {
+          this.boss.endBlink();
+          this._setState(AI_STATE.RECOVER);
+        }
+        break;
+      }
+    }
+  }
+
+  /**
+   * Compute blink destination:
+   * 6-9m from player, angle offset from player→boss direction,
+   * arena bounds check, pillar avoidance, min 4.5m from player.
+   */
+  _computeBlinkDestination(player, arena) {
+    const cfg = SKILL_CONFIG[SKILL.BLINK];
+    const angleOptions = this._phase === 2 ? cfg.phase2.angles : cfg.phase1.angles;
+
+    // Direction from player to boss
+    const playerToBoss = this._tmp2
+      .subVectors(this.boss.position, player.position)
+      .setY(0);
+    const baseAngle = Math.atan2(playerToBoss.z, playerToBoss.x);
+
+    const arenaRadius = arena.radius || 18;
+    const bossRadius = this.boss.radius || 0.8;
+    const maxAttempts = 8;
+    const result = new THREE.Vector3();
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      // Pick a random angle option
+      const angleOffset = THREE.MathUtils.degToRad(
+        angleOptions[Math.floor(Math.random() * angleOptions.length)]
+      );
+      // Add small random jitter
+      const jitter = (Math.random() - 0.5) * THREE.MathUtils.degToRad(15);
+      const angle = baseAngle + angleOffset + jitter;
+
+      // Distance: random between min and max
+      const dist = cfg.minDist + Math.random() * (cfg.maxDist - cfg.minDist);
+
+      // Candidate position: from player, at angle, at distance
+      result.set(
+        player.position.x + Math.cos(angle) * dist,
+        0,
+        player.position.z + Math.sin(angle) * dist
+      );
+
+      // Check arena bounds
+      const flatDist = Math.hypot(result.x, result.z);
+      if (flatDist > arenaRadius - bossRadius - 1.0) {
+        continue;
+      }
+
+      // Check min distance from player
+      const distToPlayer = result.distanceTo(player.position);
+      if (distToPlayer < cfg.minDist) {
+        continue;
+      }
+
+      // Check pillar avoidance
+      let blocked = false;
+      if (arena.pillars) {
+        for (const pil of arena.pillars) {
+          const d = Math.hypot(result.x - pil.x, result.z - pil.z);
+          const minPillarDist = pil.r + bossRadius + 1.0;
+          if (d < minPillarDist) {
+            blocked = true;
+            break;
+          }
+        }
+      }
+      if (blocked) continue;
+
+      // Valid destination found
+      return result;
+    }
+
+    // Fallback: just go behind boss from player at minDist
+    const fallbackAngle = baseAngle;
+    result.set(
+      player.position.x + Math.cos(fallbackAngle) * cfg.minDist,
+      0,
+      player.position.z + Math.sin(fallbackAngle) * cfg.minDist
+    );
+    // Clamp to arena
+    const flat = Math.hypot(result.x, result.z);
+    const maxR = arenaRadius - bossRadius - 1.0;
+    if (flat > maxR) {
+      result.x *= maxR / flat;
+      result.z *= maxR / flat;
+    }
+    return result;
+  }
+
+  // ==================== Interrupt / Cleanup ====================
+
+  /**
+   * Cancel any in-progress skill: hide markers, restore visuals,
+   * clear invulnerability, despawn owned projectiles.
+   */
+  _cancelCurrentSkill() {
+    // Cancel blink visuals
+    this.boss.cancelBlink?.();
+    this.boss.setCastGlow(0);
+    this.boss.hideBlinkMarker?.();
+    this._blinkSub = null;
+    this._blinkInvulnT = 0;
+
+    // Cancel barrage
+    this._barrageShotsFired = 0;
+    this._barrageDirections = [];
+    this._barrageShotTimer = 0;
+
+    // Despawn owned projectiles
+    this._despawnOwnedProjectiles();
+  }
+
+  _despawnOwnedProjectiles() {
+    for (const p of this._ownedProjectiles) {
+      if (p && p.active) {
+        p.despawn();
+      }
+    }
+    this._ownedProjectiles.clear();
   }
 
   // ==================== Cleanup ====================
 
   /**
    * Universal destroy() contract:
+   * - Cancel skills, clean up projectiles
    * - Null out callbacks to prevent stale closures
    * - Does NOT call boss.destroy() — the controller handles that separately
    */
   destroy() {
+    this._cancelCurrentSkill();
+
     // Null out callbacks
     this.onShake = null;
     this.onSkillTelegraph = null;

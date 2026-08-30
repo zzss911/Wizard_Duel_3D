@@ -28,6 +28,11 @@ const SKILL_VFX = {
     coreScale: 0.9,  trailScale: [0.5, 0.5, 5.0], glowScale: 1.5,
     spiral: false, pulse: true, pulseSpeed: 6, pulseAmp: 0.12,
   },
+  void_bolt: {
+    sparkleSize: 8,  sparkleRate: 0.05, sparkleSpread: 0.15, sparkleSpeed: 0.9,
+    coreScale: 0.8,  trailScale: [0.55, 0.55, 3.5], glowScale: 1.3,
+    spiral: false, pulse: true, pulseSpeed: 8, pulseAmp: 0.14,
+  },
 };
 
 const SPARKLE_VERT = `
@@ -132,6 +137,7 @@ export class Projectile {
     this.owner = null;
     this.life = 0;
     this.skillType = 'basic';
+    this.impactTint = null;
   }
 
   /**
@@ -145,6 +151,7 @@ export class Projectile {
     this.power = meta.power ?? 1;
     this.slow = meta.slow ?? 0;
     this.skillType = meta.skillType ?? 'basic';
+    this.impactTint = meta.impactTint ?? null;
     this.velocity.copy(dir).multiplyScalar(speed);
     this.group.position.copy(origin);
     this.group.lookAt(origin.x + dir.x, origin.y + dir.y, origin.z + dir.z);
@@ -266,5 +273,6 @@ export class Projectile {
     this.power = 1;
     this.slow = 0;
     this.skillType = 'basic';
+    this.impactTint = null;
   }
 }

@@ -111,6 +111,11 @@ export class VoidWitchBoss {
     // Flash materials (for hit flash)
     this._flashMaterials = [];
 
+    // Blink state
+    this._blinkActive = false;
+    this._blinkMarker = null;
+    this._blinkMarkerMat = null;
+
     // Build everything
     this._buildGroup();
     this._buildEffects();
@@ -177,16 +182,18 @@ export class VoidWitchBoss {
         child.castShadow = true;
         child.receiveShadow = true;
 
+        const clonedMats = [];
         if (Array.isArray(child.material)) {
-          child.material = child.material.map((m) => {
+          for (const m of child.material) {
             const cloned = m.clone();
             this._ownedMaterials.add(cloned);
             if (cloned.emissive) {
               cloned._origEmissive = cloned.emissive.getHex();
               cloned._origEmissiveIntensity = cloned.emissiveIntensity || 0;
             }
-            return cloned;
-          });
+            clonedMats.push(cloned);
+          }
+          child.material = clonedMats;
         } else {
           const cloned = child.material.clone();
           this._ownedMaterials.add(cloned);
@@ -195,10 +202,13 @@ export class VoidWitchBoss {
             cloned._origEmissiveIntensity = cloned.emissiveIntensity || 0;
           }
           child.material = cloned;
+          clonedMats.push(cloned);
         }
 
-        if (!this._flashMaterials.includes(child.material)) {
-          this._flashMaterials.push(child.material);
+        for (const cm of clonedMats) {
+          if (!this._flashMaterials.includes(cm)) {
+            this._flashMaterials.push(cm);
+          }
         }
       }
     });
@@ -505,6 +515,12 @@ export class VoidWitchBoss {
     this._hitFlashT = 0;
     this._currentAnim = 'Idle';
     this.moveIntent.set(0, 0, 0);
+    // Cancel any in-progress blink
+    this._blinkActive = false;
+    if (this.visualRoot) {
+      this.visualRoot.scale.setScalar(1);
+    }
+    this.hideBlinkMarker();
     this.position.copy(this.spawnPosition);
     this.group.rotation.set(0, 0, 0);
     this.group.position.copy(this.position);
@@ -567,6 +583,109 @@ export class VoidWitchBoss {
     if (this._coreLight) this._coreLight.intensity = 4;
     if (this._arcaneRing1Mat) this._arcaneRing1Mat.opacity = 0.8;
     if (this._arcaneRing2Mat) this._arcaneRing2Mat.opacity = 0.7;
+  }
+
+  // ==================== Blink Visual API ====================
+
+  /**
+   * Called by AI when blink sequence begins. Ensures the blink marker
+   * mesh exists (created lazily, reused for all blinks).
+   */
+  beginBlink() {
+    this._blinkActive = true;
+    this._ensureBlinkMarker();
+  }
+
+  /**
+   * Progressively fade out the boss body during the vanish phase.
+   * @param {number} progress 0→1 (0 = visible, 1 = fully vanished)
+   */
+  setBlinkVanish(progress) {
+    if (!this._blinkActive) return;
+    const p = Math.max(0, Math.min(1, progress));
+    if (this.visualRoot) {
+      this.visualRoot.scale.setScalar(Math.max(0.01, 1 - p * 0.99));
+      // Also fade opacity of additive materials
+      if (this._voidCoreMat) this._voidCoreMat.opacity = (1 - p) * 0.8;
+    }
+  }
+
+  /**
+   * Instantly relocate the boss to a new position during blink.
+   * Called at the teleport moment (vanish complete, before reappear).
+   * @param {THREE.Vector3} position — new world position
+   */
+  teleportTo(position) {
+    this.position.copy(position);
+    this.position.y = 0;
+    this.group.position.copy(this.position);
+  }
+
+  /**
+   * End the blink sequence — restore boss visibility.
+   */
+  endBlink() {
+    this._blinkActive = false;
+    if (this.visualRoot) {
+      this.visualRoot.scale.setScalar(1);
+    }
+    if (this._voidCoreMat) this._voidCoreMat.opacity = 0.8;
+    this.hideBlinkMarker();
+  }
+
+  /** Cancel any in-progress blink (for interrupts) */
+  cancelBlink() {
+    if (!this._blinkActive) return;
+    this._blinkActive = false;
+    if (this.visualRoot) {
+      this.visualRoot.scale.setScalar(1);
+    }
+    this.hideBlinkMarker();
+  }
+
+  /**
+   * Show the reusable blink destination marker at a position.
+   * @param {THREE.Vector3} pos
+   */
+  showBlinkMarker(pos) {
+    this._ensureBlinkMarker();
+    this._blinkMarker.position.set(pos.x, 0.06, pos.z);
+    this._blinkMarker.visible = true;
+    if (this._blinkMarkerMat) {
+      this._blinkMarkerMat.opacity = 0.6;
+    }
+  }
+
+  /** Update blink marker opacity for telegraph ramp */
+  setBlinkMarkerOpacity(opacity) {
+    if (this._blinkMarkerMat && this._blinkMarker.visible) {
+      this._blinkMarkerMat.opacity = Math.max(0, Math.min(1, opacity));
+    }
+  }
+
+  /** Hide the blink marker */
+  hideBlinkMarker() {
+    if (this._blinkMarker) {
+      this._blinkMarker.visible = false;
+    }
+  }
+
+  /** Lazily create the reusable blink marker mesh */
+  _ensureBlinkMarker() {
+    if (this._blinkMarker) return;
+    const geo = new THREE.RingGeometry(0.7, 1.0, 32);
+    this._ownedGeometries.add(geo);
+    const mat = new THREE.MeshBasicMaterial({
+      color: COL.voidGlow, transparent: true, opacity: 0,
+      side: THREE.DoubleSide, depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    this._ownedMaterials.add(mat);
+    this._blinkMarker = new THREE.Mesh(geo, mat);
+    this._blinkMarker.rotation.x = -Math.PI / 2;
+    this._blinkMarker.visible = false;
+    this.scene.add(this._blinkMarker);
+    this._blinkMarkerMat = mat;
   }
 
   setBossState(state) {
@@ -794,6 +913,7 @@ export class VoidWitchBoss {
     if (this.group) this.scene.remove(this.group);
     if (this.fog) this.scene.remove(this.fog);
     if (this.groundRune) this.scene.remove(this.groundRune);
+    if (this._blinkMarker) this.scene.remove(this._blinkMarker);
 
     // Dispose only instance-owned geometries and materials.
     // GLB geometry is shared (source-owned) and is NOT in these Sets.

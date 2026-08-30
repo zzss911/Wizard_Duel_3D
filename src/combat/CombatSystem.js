@@ -183,8 +183,9 @@ export class CombatSystem {
             this.onImpact && this.onImpact(this._hitPos, ep, c, skillType);
           } else if (c.isPlayer) {
             // 玩家被命中
-            this.effects.burst(this._hitPos, 0xff5a3c, 12);
-            this.effects.impactFlash(this._hitPos, 0xff5a3c, 1.2);
+            const pTint = p.impactTint ?? 0xff5a3c;
+            this.effects.burst(this._hitPos, pTint, 12);
+            this.effects.impactFlash(this._hitPos, pTint, 1.2);
             this.onPlayerHit && this.onPlayerHit(this._hitPos, p.damage);
           } else if (p.slow > 0) {
             // 束缚咒命中：紫色爆发 + 符文环 + 强闪光
