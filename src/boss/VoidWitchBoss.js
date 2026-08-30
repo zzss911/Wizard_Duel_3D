@@ -141,6 +141,7 @@ export class VoidWitchBoss {
     this._vwIntroShake = false;
     this._vwPhaseChangeBurst = false;
     this._vwDeathStage = 0;
+    this._deathCinematicComplete = false;
 
     // Build everything
     this._buildGroup();
@@ -546,6 +547,7 @@ export class VoidWitchBoss {
     this._phaseChangeT = 0;
     this._hitFlashT = 0;
     this._mirrorTellActive = false;
+    this._deathCinematicComplete = false;
     this._currentAnim = 'Idle';
     this.moveIntent.set(0, 0, 0);
     // Cancel any in-progress blink
@@ -814,6 +816,24 @@ export class VoidWitchBoss {
       this._arcaneRing2.rotation.y = this._ringRotation * 0.7;
     }
 
+    // --- Sealed death terminal state: keep lifecycle timers, skip all visuals ---
+    if (this._deathCinematicComplete) {
+      // Timers (already updated above) + movement sync only
+      this._invulnT = Math.max(0, this._invulnT - dt);
+      if (this._slowT > 0) {
+        this._slowT = Math.max(0, this._slowT - dt);
+        if (this._slowT <= 0) this.speedMult = 1;
+      }
+      if (this._hitFlashT > 0) this._hitFlashT -= dt;
+      if (this.moveIntent.lengthSq() > 0.001) {
+        this.position.addScaledVector(this.moveIntent, this.speed * this.speedMult * dt);
+      }
+      this.group.position.copy(this.position);
+      this.group.rotation.y = this._facing;
+      if (this.fog.visible) this._updateFog(dt);
+      return;
+    }
+
     // --- Normal visual presentation (skip during custom cinematic) ---
     if (!customCinematic) {
       // Mirror real tell: slightly brighter secondary ring
@@ -844,7 +864,8 @@ export class VoidWitchBoss {
     }
 
     // --- Death animation (legacy, skip when custom death cinematic active) ---
-    if (this._vwState === 'DEAD' && this._cinematicKind !== 'death') {
+    // Also skip when death cinematic has already completed — sealed terminal state
+    if (this._vwState === 'DEAD' && this._cinematicKind !== 'death' && !this._deathCinematicComplete) {
       this._deathT += dt;
       const dp = Math.min(1, this._deathT / 2.5);
 
@@ -1043,6 +1064,7 @@ export class VoidWitchBoss {
       this._cinematicT = 0;
       this._cinematicCtx = context;
       this._vwDeathStage = 0;
+      this._deathCinematicComplete = false;
       return true;
     }
 
@@ -1080,6 +1102,18 @@ export class VoidWitchBoss {
       this.visualRoot.scale.setScalar(1);
       this.visualRoot.position.y = this.FLOAT_Y;
       this.setCastGlow(0);
+    }
+    if (kind === 'death') {
+      // Seal terminal death state — prevent visual resurrection
+      this._deathCinematicComplete = true;
+      this.visualRoot.scale.setScalar(0.01);
+      if (this._voidCoreMat) this._voidCoreMat.opacity = 0;
+      if (this._coreLight) this._coreLight.intensity = 0;
+      if (this._arcaneRing1Mat) this._arcaneRing1Mat.opacity = 0;
+      if (this._arcaneRing2Mat) this._arcaneRing2Mat.opacity = 0;
+      this.fog.visible = false;
+      this.groundRune.visible = false;
+      this.group.visible = false;
     }
   }
 

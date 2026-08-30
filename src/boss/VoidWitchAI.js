@@ -1398,6 +1398,9 @@ export class VoidWitchAI {
    * Idempotent: safe to call multiple times.
    */
   cancelCurrentSkill() {
+    // Clear movement intent — interrupt contract: cancel attack + hazard + movement
+    this.boss.moveIntent?.set(0, 0, 0);
+
     // Cancel blink visuals + clear blink invulnerability
     this.boss.cancelBlink?.();
     this.boss.clearInvulnerability?.();
