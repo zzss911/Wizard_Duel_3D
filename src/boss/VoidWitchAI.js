@@ -307,7 +307,7 @@ export class VoidWitchAI {
 
     // Update all active Clones regardless of AI state
     for (const clone of this._clonePool) {
-      if (clone.active || clone._state !== 'INACTIVE') {
+      if (clone.needsUpdate) {
         clone.update(dt, player);
       }
     }
@@ -943,7 +943,10 @@ export class VoidWitchAI {
     // Compute formation around player snapshot
     const slots = this._computeMirrorFormation(player, arena);
     if (!slots) {
-      // Safe cancel — no valid formation, go to recover
+      // No valid formation — safe cancel to RECOVER.
+      // Re-set guaranteed flag so the next CHOOSE retries Mirror.
+      this._mirrorGuaranteed = true;
+      this._mirrorCooldown = 0;
       this._setState(AI_STATE.RECOVER);
       return;
     }
@@ -956,7 +959,8 @@ export class VoidWitchAI {
     const realPos = slots[this._mirrorRealIndex];
     this.boss.teleportTo(realPos);
 
-    // Activate clones at the other 2 slots
+    // Activate clones at the other 2 slots.
+    // Clones start non-targetable (invincible) during SETUP.
     let cloneIdx = 0;
     for (let i = 0; i < 3; i++) {
       if (i === this._mirrorRealIndex) continue;
@@ -969,6 +973,7 @@ export class VoidWitchAI {
         player.position.z - slot.z
       );
       clone.activate(slot, facing, MIRROR_CONFIG.activeDuration);
+      clone.setTargetable(false);
       cloneIdx++;
     }
 
@@ -1113,13 +1118,20 @@ export class VoidWitchAI {
       case MIRROR_SUB.SETUP: {
         // Brief setup — clones fade in, boss repositions
         if (this._mirrorSubT >= MIRROR_CONFIG.setupDuration) {
-          // Enter ACTIVE
+          // Enter ACTIVE — all targets become damageable on the same frame
           this._mirrorSub = MIRROR_SUB.ACTIVE;
           this._mirrorSubT = 0;
           this._mirrorFakeCastT = 0;
 
-          // Clear invulnerability — boss is damageable during ACTIVE
+          // Clear boss invulnerability — damageable during ACTIVE
           b.clearInvulnerability?.();
+
+          // Make clones targetable — projectiles now hit and dissolve them
+          for (const clone of this._clonePool) {
+            if (clone.active) {
+              clone.setTargetable(true);
+            }
+          }
 
           // Initial fake cast on all targets
           this._triggerFakeCast(player);
@@ -1135,16 +1147,19 @@ export class VoidWitchAI {
           this._triggerFakeCast(player);
         }
 
-        // Check early end: all clones dead after minActiveBeforeEarlyEnd
+        // Check early end: all clones fully resolved (dissolve complete)
+        // after the minimum active window.
+        // We use isResolved so the last clone's dissolve animation
+        // (0.38s) is not truncated by the domain ending.
         if (this._mirrorSubT >= MIRROR_CONFIG.minActiveBeforeEarlyEnd) {
-          let allClonesDead = true;
+          let allResolved = true;
           for (const clone of this._clonePool) {
-            if (clone.active) {
-              allClonesDead = false;
+            if (!clone.isResolved) {
+              allResolved = false;
               break;
             }
           }
-          if (allClonesDead) {
+          if (allResolved) {
             this._endMirror();
             return;
           }

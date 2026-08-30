@@ -797,7 +797,7 @@ export class VoidWitchBoss {
     if (this._coreLight) {
       // Mirror real tell: ~12% brighter core light
       const tellBoost = this._mirrorTellActive ? 0.5 : 0;
-      this._coreLight.intensity = 2 + this._castGlow * 3 + tellBoost;
+      this._coreLight.intensity = (this.phase2 ? 4 : 2) + this._castGlow * 3 + tellBoost;
     }
 
     // --- Floating orb bobbing ---

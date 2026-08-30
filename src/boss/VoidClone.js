@@ -49,6 +49,7 @@ export class VoidClone {
     this.radius = 0.8;
     this.active = false;
     this.dead = true;
+    this._targetable = false;
 
     this.position = new THREE.Vector3();
     this._facing = 0;
@@ -187,7 +188,22 @@ export class VoidClone {
   // ==================== Public API ====================
 
   get isInvincible() {
-    return false;
+    return !this._targetable;
+  }
+
+  /** Public lifecycle: clone needs per-frame update */
+  get needsUpdate() {
+    return this._state !== CLONE_STATE.INACTIVE;
+  }
+
+  /** Public lifecycle: clone fully resolved (back to INACTIVE) */
+  get isResolved() {
+    return this._state === CLONE_STATE.INACTIVE;
+  }
+
+  /** Toggle targetability. SETUP phase: false (invincible). ACTIVE: true. */
+  setTargetable(value) {
+    this._targetable = value;
   }
 
   get headPosition() {
@@ -221,12 +237,14 @@ export class VoidClone {
     this.active = true;
     this.dead = false;
     this._fakeCastProgress = 0;
+    this._targetable = false;
     this._floatPhase = Math.random() * Math.PI * 2;
 
     // Restore visuals
     this.visualRoot.scale.setScalar(1);
     this.visualRoot.position.y = FLOAT_Y;
     this._coreMat.opacity = 0.7;
+    this._coreLight.intensity = 3.2;
     this._ring1Mat.opacity = 0.55;
     this._ring2Mat.opacity = 0.4;
 
@@ -289,10 +307,13 @@ export class VoidClone {
 
   /**
    * One-hit decoy: any damage → dissolve.
+   * Only takes damage when targetable (ACTIVE phase).
+   * During SETUP, _targetable=false → isInvincible=true → projectile despawns but clone survives.
    * Never calls real boss.takeDamage().
    */
   takeDamage(amount) {
     if (this._state !== CLONE_STATE.ACTIVE) return;
+    if (!this._targetable) return;
     this._beginDissolve();
   }
 
@@ -317,6 +338,7 @@ export class VoidClone {
     this._stateT = 0;
     this.active = false;
     this.dead = true;
+    this._targetable = false;
     this._fakeCastProgress = 0;
     this.group.visible = false;
 
@@ -364,12 +386,12 @@ export class VoidClone {
     this._ring1Mat.opacity = fade * 0.55;
     this._ring2Mat.opacity = fade * 0.4;
 
-    // Core light flicker out
+    // Core light flicker out — clamp to 0 to avoid negative intensity
     this._coreLight.intensity = Math.max(0, 3.2 * fade + Math.sin(this._dissolveT * 30) * 0.5);
 
-    // Flash materials destabilize
+    // Flash materials destabilize — clamp to avoid negative intensity
     for (const mat of this._flashMaterials) {
-      mat.emissiveIntensity = fade * 0.5 + Math.sin(this._dissolveT * 20) * 0.3;
+      mat.emissiveIntensity = Math.max(0, fade * 0.5 + Math.sin(this._dissolveT * 20) * 0.3);
     }
 
     if (p >= 1) {
