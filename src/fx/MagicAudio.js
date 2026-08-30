@@ -422,6 +422,103 @@ export class MagicAudio {
     }
   }
 
+  /* ==================== Void Witch Skill Audio ==================== */
+
+  /** Void Blink: rapid downward whoosh + shimmer on reappear */
+  playVoidBlink(distance = 6) {
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    const t0 = this.ctx.currentTime;
+    const atten = Math.max(0.15, Math.min(1, 14 / (distance + 6)));
+
+    // Downward whoosh (bandpass sweep)
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(3000, t0);
+    bp.frequency.exponentialRampToValueAtTime(200, t0 + 0.25);
+    bp.Q.value = 3.0;
+    const src = this.ctx.createBufferSource();
+    src.buffer = this._noiseBuffer;
+    src.playbackRate.value = 1.5;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.2 * atten, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.3);
+    src.connect(bp).connect(g).connect(this.master);
+    src.start(t0);
+    src.stop(t0 + 0.32);
+
+    // High shimmer tone (void energy)
+    this._tone(this.master, t0 + 0.02, {
+      type: 'triangle', from: 2400, to: 600, gain: 0.1 * atten, dur: 0.25, echo: 0.3
+    });
+  }
+
+  /** Void Rift: deep crack + sustained low rumble */
+  playVoidRift(distance = 6) {
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    const t0 = this.ctx.currentTime;
+    const atten = Math.max(0.15, Math.min(1, 14 / (distance + 6)));
+
+    // Initial crack (high freq burst)
+    this._noise(this.master, t0, { hp: 1800, gain: 0.25 * atten, dur: 0.08, echo: 0.3 });
+
+    // Deep rumble (low sine + sub)
+    this._tone(this.master, t0, {
+      type: 'sine', from: 90, to: 35, gain: 0.4 * atten, dur: 0.6, echo: 0.4
+    });
+    this._tone(this.master, t0 + 0.03, {
+      type: 'sine', from: 45, to: 22, gain: 0.3 * atten, dur: 0.8, echo: 0.3
+    });
+
+    // Low rumble noise
+    this._noise(this.master, t0, { lp: 400, lpEnd: 60, gain: 0.2 * atten, dur: 0.7, echo: 0.35 });
+  }
+
+  /** Mirror Domain: ethereal glass shatter + reverb */
+  playMirrorDomain(distance = 6) {
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    const t0 = this.ctx.currentTime;
+    const atten = Math.max(0.15, Math.min(1, 14 / (distance + 6)));
+
+    // Glass shatter — high freq noise burst with quick decay
+    this._noise(this.master, t0, { hp: 3500, gain: 0.18 * atten, dur: 0.12, echo: 0.5 });
+
+    // Ethereal pad chord (minor)
+    this._tone(this.echo, t0 + 0.05, {
+      type: 'triangle', from: 880, to: 660, gain: 0.08 * atten, dur: 1.0
+    });
+    this._tone(this.echo, t0 + 0.08, {
+      type: 'triangle', from: 660, to: 440, gain: 0.06 * atten, dur: 1.2
+    });
+    this._tone(this.echo, t0 + 0.1, {
+      type: 'sine', from: 440, to: 330, gain: 0.05 * atten, dur: 1.5
+    });
+
+    // Low bass anchor
+    this._tone(this.master, t0, {
+      type: 'sine', from: 110, to: 55, gain: 0.15 * atten, dur: 0.8, echo: 0.3
+    });
+  }
+
+  /** Clone break: short crystalline pop + cold flash */
+  playCloneBreak(distance = 6) {
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    const t0 = this.ctx.currentTime;
+    const atten = Math.max(0.15, Math.min(1, 14 / (distance + 6)));
+
+    // Crystalline pop (high freq tone burst)
+    this._tone(this.master, t0, {
+      type: 'triangle', from: 1800, to: 3200, gain: 0.12 * atten, dur: 0.1, echo: 0.4
+    });
+
+    // Glass crack noise
+    this._noise(this.master, t0, { hp: 2800, gain: 0.1 * atten, dur: 0.08, echo: 0.3 });
+
+    // Cold sub-bass thump
+    this._tone(this.master, t0, {
+      type: 'sine', from: 80, to: 30, gain: 0.15 * atten, dur: 0.2
+    });
+  }
+
   /** BGM 衰减到 0，但不清除 type（用于 endGame / bossDeath） */
   fadeOutMusic(duration = 1.5) {
     if (this._bgmGain) {

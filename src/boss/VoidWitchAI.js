@@ -216,6 +216,7 @@ export class VoidWitchAI {
     this._mirrorSubT = 0;
     this._mirrorCooldown = 0;
     this._mirrorGuaranteed = false;
+    this._mirrorRetryAfterNormal = false;
     this._mirrorSlots = [null, null, null]; // 3 positions: [real, clone0, clone1]
     this._mirrorRealIndex = 0; // which slot index is the real boss
     this._mirrorFakeCastT = 0;
@@ -258,6 +259,7 @@ export class VoidWitchAI {
     this._mirrorSubT = 0;
     this._mirrorCooldown = 0;
     this._mirrorGuaranteed = false;
+    this._mirrorRetryAfterNormal = false;
     this._mirrorFakeCastT = 0;
     this._mirrorSlots = [null, null, null];
     this.boss.setMirrorRealTell?.(false);
@@ -519,8 +521,18 @@ export class VoidWitchAI {
   // ==================== Skill Selection ====================
 
   _chooseSkill(dist) {
-    // Phase II guaranteed first Mirror
-    if (this._phase === 2 && this._mirrorGuaranteed) {
+    // Mirror retry after formation failure: execute one normal skill first,
+    // then guarantee Mirror on the NEXT CHOOSE.
+    // Use _mirrorRetryAfterNormal to force a normal skill this round.
+    const forceNormal = this._mirrorRetryAfterNormal;
+    if (forceNormal) {
+      this._mirrorRetryAfterNormal = false;
+      // Don't set _mirrorGuaranteed here — it would trigger the check below
+      // in this same call. Set it at the end of this method instead.
+    }
+
+    // Phase II guaranteed first Mirror (not forced if we need a normal skill first)
+    if (!forceNormal && this._phase === 2 && this._mirrorGuaranteed) {
       this._mirrorGuaranteed = false;
       this._mirrorCooldown = MIRROR_COOLDOWN;
       return SKILL.MIRROR;
@@ -573,22 +585,30 @@ export class VoidWitchAI {
       }
     }
 
+    // If forceNormal (from Mirror retry), exclude Mirror from the pool
+    let effectivePool = forceNormal ? pool.filter(s => s !== SKILL.MIRROR) : pool;
+    if (effectivePool.length === 0) effectivePool = pool; // safety fallback
+
     let total = 0;
-    for (const s of pool) total += weights[s] || 1;
+    for (const s of effectivePool) total += weights[s] || 1;
     let r = Math.random() * total;
-    for (const s of pool) {
+    for (const s of effectivePool) {
       r -= (weights[s] || 1);
       if (r <= 0) {
         if (s === SKILL.MIRROR) {
           this._mirrorCooldown = MIRROR_COOLDOWN;
         }
+        // If this was a forced normal skill from Mirror retry, guarantee Mirror next time
+        if (forceNormal) this._mirrorGuaranteed = true;
         return s;
       }
     }
-    if (pool.includes(SKILL.MIRROR)) {
+    if (effectivePool.includes(SKILL.MIRROR)) {
       this._mirrorCooldown = MIRROR_COOLDOWN;
     }
-    return pool[0];
+    // If this was a forced normal skill from Mirror retry, guarantee Mirror next time
+    if (forceNormal) this._mirrorGuaranteed = true;
+    return effectivePool[0];
   }
 
   // ==================== Telegraph ====================
@@ -697,6 +717,8 @@ export class VoidWitchAI {
       // Small cast burst per shot
       this.boss.getCastOrigin(this._tmp);
       this.effects.burst(this._tmp, 0x9a6cff, 4, 0.08);
+      // Audio: void bolt cast
+      if (this.audio) this.audio.playCast(3);
     }
     // If pool full (p === null), we skip this shot — safe degradation
   }
@@ -711,6 +733,9 @@ export class VoidWitchAI {
     // Window covers vanish (0.15s) + relocate (0.10s) = 0.25s.
     const cfg = SKILL_CONFIG[SKILL.BLINK];
     this.boss.setInvulnerable(cfg.invulnDuration);
+
+    // Audio: void blink whoosh
+    if (this.audio) this.audio.playVoidBlink(6);
   }
 
   _updateBlink(dt, player, arena) {
@@ -798,6 +823,9 @@ export class VoidWitchAI {
     // Cast flash
     this.boss.getCastOrigin(this._tmp);
     this.effects.burst(this._tmp, 0x6f3cff, 8, 0.1);
+
+    // Audio: void rift crack
+    if (this.audio) this.audio.playVoidRift(6);
   }
 
   _updateRiftSkill(dt, player, arena) {
@@ -944,8 +972,9 @@ export class VoidWitchAI {
     const slots = this._computeMirrorFormation(player, arena);
     if (!slots) {
       // No valid formation — safe cancel to RECOVER.
-      // Re-set guaranteed flag so the next CHOOSE retries Mirror.
-      this._mirrorGuaranteed = true;
+      // Set retry flag: next CHOOSE executes one normal skill, then guarantees Mirror.
+      // This prevents starvation loops where Mirror keeps failing repeatedly.
+      this._mirrorRetryAfterNormal = true;
       this._mirrorCooldown = 0;
       this._setState(AI_STATE.RECOVER);
       return;
@@ -974,6 +1003,19 @@ export class VoidWitchAI {
       );
       clone.activate(slot, facing, MIRROR_CONFIG.activeDuration);
       clone.setTargetable(false);
+      // Clone break callback: purple burst + audio feedback
+      clone.onBreak = (pos) => {
+        this.effects.burst(
+          this._tmp.set(pos.x, 1.0, pos.z),
+          0x9a6cff, 12, 0.15
+        );
+        this.effects.burst(
+          this._tmp.set(pos.x, 1.0, pos.z),
+          0xffffff, 6, 0.08
+        );
+        if (this.audio) this.audio.playCloneBreak(6);
+        if (this.onShake) this.onShake(0.3);
+      };
       cloneIdx++;
     }
 
@@ -995,6 +1037,9 @@ export class VoidWitchAI {
       );
     }
     if (this.onShake) this.onShake(0.3);
+
+    // Audio: mirror domain ethereal shatter
+    if (this.audio) this.audio.playMirrorDomain(6);
   }
 
   /**

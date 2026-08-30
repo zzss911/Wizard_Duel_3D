@@ -62,6 +62,10 @@ const WARDEN_REGISTRY = {
       death_cage: { zh: '死亡牢笼', en: 'DEATH CAGE' },
     },
     dangerousSkills: ['death_cage'],
+    // Data-driven cinematic timeline (seconds)
+    titleAt: 2.8,
+    healthAt: 3.6,
+    fightAt: 4.0,
     introDuration: 4.5,
     phaseChangeDuration: 2.5,
     deathDuration: 4.0,
@@ -86,7 +90,8 @@ const VOID_WITCH_REGISTRY = {
   difficulty: 4,
   portrait: '🔮',
   themeColor: '#8a4adf',
-  model: './assets/models/void_witch_rigged.glb',
+  // GLB asset path kept for future enablement; currently uses procedural fallback
+  model: null,
 
   // Phase B: procedural model + basic AI skeleton
   factory: (scene) => new VoidWitchBoss(scene),
@@ -108,6 +113,10 @@ const VOID_WITCH_REGISTRY = {
       mirror_domain: { zh: '镜像领域', en: 'MIRROR DOMAIN' },
     },
     dangerousSkills: ['mirror_domain'],
+    // Data-driven cinematic timeline (seconds)
+    titleAt: 2.2,
+    healthAt: 3.1,
+    fightAt: 3.5,
     introDuration: 4.0,
     phaseChangeDuration: 3.0,
     deathDuration: 4.0,

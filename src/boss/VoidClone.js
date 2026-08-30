@@ -65,6 +65,10 @@ export class VoidClone {
     this._idleTime = 0;
     this._fakeCastProgress = 0;
 
+    // Break callback — called when clone is destroyed by player hit.
+    // Signature: (position) => void. Set by VoidWitchAI.
+    this.onBreak = null;
+
     // Scratch vectors
     this._tmp = new THREE.Vector3();
 
@@ -152,8 +156,8 @@ export class VoidClone {
     this._voidCore.position.set(0, 1.5, 0.15);
     this.visualRoot.add(this._voidCore);
 
-    // Core point light — ~85% intensity of boss P2
-    this._coreLight = new THREE.PointLight(COL.voidGlow, 3.2, 4, 2);
+    // Core point light — slightly dimmer than real boss (real ~4.0, clone ~3.7)
+    this._coreLight = new THREE.PointLight(COL.voidGlow, 3.7, 4, 2);
     this._coreLight.position.set(0, 1.5, 0.2);
     this.visualRoot.add(this._coreLight);
 
@@ -244,7 +248,7 @@ export class VoidClone {
     this.visualRoot.scale.setScalar(1);
     this.visualRoot.position.y = FLOAT_Y;
     this._coreMat.opacity = 0.7;
-    this._coreLight.intensity = 3.2;
+    this._coreLight.intensity = 3.7;
     this._ring1Mat.opacity = 0.55;
     this._ring2Mat.opacity = 0.4;
 
@@ -290,7 +294,7 @@ export class VoidClone {
     // Core pulse (slightly dimmer than boss)
     const pulse = 0.4 + Math.sin(this._idleTime * 3) * 0.2 + this._fakeCastProgress * 0.25;
     this._coreMat.opacity = pulse;
-    this._coreLight.intensity = 3.2 + this._fakeCastProgress * 2;
+    this._coreLight.intensity = 3.7 + this._fakeCastProgress * 2;
 
     if (this._state === CLONE_STATE.ACTIVE) {
       // Fake cast decay
@@ -345,8 +349,11 @@ export class VoidClone {
     // Restore visuals for next use
     this.visualRoot.scale.setScalar(1);
     this._coreMat.opacity = 0.7;
+    this._coreMat.color.setHex(COL.voidCore);
     this._ring1Mat.opacity = 0.55;
     this._ring2Mat.opacity = 0.4;
+    this._coreLight.color.setHex(COL.voidGlow);
+    this._coreLight.intensity = 3.7;
     for (const mat of this._flashMaterials) {
       mat.emissiveIntensity = 0;
     }
@@ -371,8 +378,20 @@ export class VoidClone {
     this.dead = true;
     this.active = false;
 
-    // Purple burst on hit/dissolve
-    // (caller's effects system handles the burst visual)
+    // Clone break feedback: purple burst + cold-white flash
+    // White core flash
+    if (this._coreMat) {
+      this._coreMat.color.setHex(0xffffff);
+    }
+    if (this._coreLight) {
+      this._coreLight.color.setHex(0xffffff);
+      this._coreLight.intensity = 6;
+    }
+
+    // Call onBreak callback with clone position for AI-side effects
+    if (this.onBreak) {
+      this.onBreak(this.position.clone());
+    }
   }
 
   _updateDissolve(dt) {
@@ -387,7 +406,7 @@ export class VoidClone {
     this._ring2Mat.opacity = fade * 0.4;
 
     // Core light flicker out — clamp to 0 to avoid negative intensity
-    this._coreLight.intensity = Math.max(0, 3.2 * fade + Math.sin(this._dissolveT * 30) * 0.5);
+    this._coreLight.intensity = Math.max(0, 3.7 * fade + Math.sin(this._dissolveT * 30) * 0.5);
 
     // Flash materials destabilize — clamp to avoid negative intensity
     for (const mat of this._flashMaterials) {

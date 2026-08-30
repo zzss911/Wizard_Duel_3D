@@ -22,16 +22,28 @@ import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
  */
 
 // ---- Module-level GLB loader cache (independent from Warden) ----
+// Future path constant — kept for when the GLB asset becomes available.
+// Currently disabled to avoid 404 network errors; procedural fallback is used directly.
+const VOID_WITCH_GLB_PATH = './assets/models/void_witch_rigged.glb';
+const VOID_WITCH_GLB_ENABLED = false;
+
 let _vwLoader = null;
 let _vwLoadPromise = null;
-let _vwLoadWarned = false;
 
 function loadVoidWitchGLB() {
   if (_vwLoadPromise) return _vwLoadPromise;
+
+  if (!VOID_WITCH_GLB_ENABLED) {
+    // GLB not available — reject immediately without network request.
+    // Procedural fallback in _loadModel handles this gracefully.
+    _vwLoadPromise = Promise.reject(new Error('GLB disabled — using procedural fallback'));
+    return _vwLoadPromise;
+  }
+
   if (!_vwLoader) _vwLoader = new GLTFLoader();
   _vwLoadPromise = new Promise((resolve, reject) => {
     _vwLoader.load(
-      './assets/models/void_witch_rigged.glb',
+      VOID_WITCH_GLB_PATH,
       (gltf) => resolve({ scene: gltf.scene, animations: gltf.animations || [] }),
       undefined,
       (err) => reject(err)
@@ -67,6 +79,7 @@ export class VoidWitchBoss {
     this.hp = this.maxHp;
     this.radius = 0.8;
     this.speed = 3.2;
+    this.FLOAT_Y = FLOAT_Y;
     this.dead = false;
 
     this.spawnPosition = new THREE.Vector3(0, 0, -10);
@@ -119,6 +132,16 @@ export class VoidWitchBoss {
     // Mirror real tell state
     this._mirrorTellActive = false;
 
+    // Cinematic hook state
+    this._cinematicKind = null;
+    this._cinematicT = 0;
+    this._cinematicCtx = null;
+    this._vwIntroShown = false;
+    this._vwIntroSlam = false;
+    this._vwIntroShake = false;
+    this._vwPhaseChangeBurst = false;
+    this._vwDeathStage = 0;
+
     // Build everything
     this._buildGroup();
     this._buildEffects();
@@ -154,11 +177,8 @@ export class VoidWitchBoss {
       })
       .catch(() => {
         if (this._destroyed) return;
-        // Warn at most once across all instances
-        if (!_vwLoadWarned) {
-          _vwLoadWarned = true;
-          console.warn('[VoidWitchBoss] void_witch_rigged.glb not found, using procedural fallback');
-        }
+        // GLB intentionally disabled — use procedural fallback directly.
+        // No console.warn needed since this is expected behavior.
         this._buildFallbackMesh();
         this._modelLoaded = true;
         this._modelLoading = false;
@@ -317,7 +337,7 @@ export class VoidWitchBoss {
     this.visualRoot.add(this._voidCore);
 
     // Point light for void core glow
-    this._coreLight = new THREE.PointLight(COL.voidGlow, 2, 4, 2);
+    this._coreLight = new THREE.PointLight(COL.voidGlow, 3.5, 4, 2);
     this._coreLight.position.set(0, 1.5, 0.2);
     this.visualRoot.add(this._coreLight);
   }
@@ -603,7 +623,7 @@ export class VoidWitchBoss {
     if (!active) {
       // Restore to phase baseline
       if (this._coreLight) {
-        this._coreLight.intensity = this.phase2 ? 4 : 2;
+        this._coreLight.intensity = this.phase2 ? 4 : 3.5;
       }
       if (this._arcaneRing1Mat) {
         this._arcaneRing1Mat.opacity = this.phase2 ? 0.8 : 0.6;
@@ -795,9 +815,9 @@ export class VoidWitchBoss {
       this._voidCoreMat.opacity = pulse;
     }
     if (this._coreLight) {
-      // Mirror real tell: ~12% brighter core light
-      const tellBoost = this._mirrorTellActive ? 0.5 : 0;
-      this._coreLight.intensity = (this.phase2 ? 4 : 2) + this._castGlow * 3 + tellBoost;
+      // Mirror real tell: ~5% brighter core light (subtle, not obvious)
+      const tellBoost = this._mirrorTellActive ? 0.2 : 0;
+      this._coreLight.intensity = (this.phase2 ? 4 : 3.5) + this._castGlow * 3 + tellBoost;
     }
 
     // --- Floating orb bobbing ---
@@ -810,7 +830,8 @@ export class VoidWitchBoss {
     }
 
     // --- Death animation ---
-    if (this._vwState === 'DEAD') {
+    // Skip if death cinematic hook is active (handles its own death visuals)
+    if (this._vwState === 'DEAD' && this._cinematicKind !== 'death') {
       this._deathT += dt;
       const dp = Math.min(1, this._deathT / 2.5);
 
@@ -854,7 +875,8 @@ export class VoidWitchBoss {
     }
 
     // --- Phase change animation ---
-    if (this._vwState === 'PHASE_CHANGE') {
+    // Skip if phase change cinematic hook is active
+    if (this._vwState === 'PHASE_CHANGE' && this._cinematicKind !== 'phase_change') {
       this._phaseChangeT += dt;
       // Rise up
       const riseOffset = Math.sin(Math.min(1, this._phaseChangeT / 1.5) * Math.PI) * 0.3;
@@ -963,6 +985,318 @@ export class VoidWitchBoss {
       worldPos[i3 + 2] = bz + this._fogPos[i3 + 2];
     }
     this.fog.geometry.attributes.position.needsUpdate = true;
+  }
+
+  /* ==================== Capability-based Cinematic Hooks ==================== */
+
+  /**
+   * Called by BossBattleController when a cinematic sequence starts.
+   * Returns true if this boss handles its own cinematic visuals, false/undefined
+   * to fall back to the legacy Warden-style cinematic.
+   * @param {string} kind - 'intro' | 'phase_change' | 'death'
+   * @param {object} context - { bossPos, playerPos, config, camera, explosion, audio, hud, onShake }
+   * @returns {boolean}
+   */
+  onCinematicStart(kind, context) {
+    if (kind === 'intro') {
+      this._cinematicKind = 'intro';
+      this._cinematicT = 0;
+      this._cinematicCtx = context;
+      // Reset intro flags
+      this._vwIntroShown = false;
+      this._vwIntroSlam = false;
+      this._vwIntroShake = false;
+      // Dark arena + fog + runes
+      if (this.groundRuneMat) this.groundRuneMat.opacity = 0;
+      if (this.fog) this.fog.visible = true;
+      this.group.visible = false;
+      return true;
+    }
+
+    if (kind === 'phase_change') {
+      this._cinematicKind = 'phase_change';
+      this._cinematicT = 0;
+      this._cinematicCtx = context;
+      this._vwPhaseChangeBurst = false;
+      return true;
+    }
+
+    if (kind === 'death') {
+      this._cinematicKind = 'death';
+      this._cinematicT = 0;
+      this._cinematicCtx = context;
+      this._vwDeathStage = 0;
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Called every frame during a cinematic sequence.
+   * Returns true while the cinematic is still active, false when done.
+   * @param {string} kind
+   * @param {number} t - elapsed time
+   * @param {number} dt - frame delta
+   * @param {object} context
+   * @returns {boolean}
+   */
+  onCinematicUpdate(kind, t, dt, context) {
+    if (kind === 'intro') return this._updateIntroCinematic(t, dt, context);
+    if (kind === 'phase_change') return this._updatePhaseChangeCinematic(t, dt, context);
+    if (kind === 'death') return this._updateDeathCinematic(t, dt, context);
+    return false;
+  }
+
+  /**
+   * Called when a cinematic sequence ends.
+   * @param {string} kind
+   * @param {object} context
+   */
+  onCinematicEnd(kind, context) {
+    this._cinematicKind = null;
+    this._cinematicT = 0;
+    this._cinematicCtx = null;
+    // Ensure boss is visible and at full scale after any cinematic
+    if (kind === 'intro' || kind === 'phase_change') {
+      this.group.visible = true;
+      this.visualRoot.scale.setScalar(1);
+      this.visualRoot.position.y = this.FLOAT_Y;
+      this.setCastGlow(0);
+    }
+  }
+
+  _updateIntroCinematic(t, dt, ctx) {
+    const cfg = ctx.config;
+    const cam = ctx.camera;
+    const duration = cfg.introDuration;
+
+    // Phase 1 (0~0.7s): Arena dark, runes light up, fog gathers
+    if (t < 0.7) {
+      const tp = t / 0.7;
+      if (this.groundRuneMat) this.groundRuneMat.opacity = tp * 0.7;
+      if (this.fog) {
+        this.fog.visible = true;
+        // Fog density ramps up
+        if (this.fog.material) this.fog.material.opacity = tp * 0.4;
+      }
+    }
+
+    // Phase 2 (0.7~1.5s): Boss emerges from void — scale 0.35→1
+    if (t >= 0.7 && t < 1.5) {
+      if (!this._vwIntroShown) {
+        this._vwIntroShown = true;
+        this.group.visible = true;
+        this.fog.visible = true;
+        this.visualRoot.scale.setScalar(0.35);
+      }
+      const tp = (t - 0.7) / 0.8;
+      const ease = tp < 0.5 ? 2 * tp * tp : -1 + (4 - 2 * tp) * tp;
+      const scale = 0.35 + (1 - 0.35) * ease;
+      this.visualRoot.scale.setScalar(scale);
+      if (this.groundRuneMat) this.groundRuneMat.opacity = 0.7 + tp * 0.3;
+      // First emergence shake
+      if (t >= 0.7 && t < 0.75 && !this._vwIntroShake) {
+        this._vwIntroShake = true;
+        ctx.onShake?.(0.3);
+        ctx.audio?.playExplosion(0.5, 12);
+      }
+    }
+
+    // Phase 3 (1.5~2.2s): Rise, rings activate, floating orb, light shake
+    if (t >= 1.5 && t < 2.2) {
+      const tp = (t - 1.5) / 0.7;
+      this.visualRoot.scale.setScalar(1);
+      // Rings and orb activate
+      this.setCastGlow(tp * 0.6);
+      // Slight rise
+      const riseOffset = Math.sin(tp * Math.PI) * 0.15;
+      this.visualRoot.position.y = this.FLOAT_Y + riseOffset;
+      // Ring rotation accelerates
+      this._ringRotation += dt * (1.2 + tp * 2);
+    }
+
+    // Phase 4 (2.2s+): Hold — title/HP/FIGHT handled by controller timeline
+    if (t >= 2.2) {
+      this.setCastGlow(0.5);
+      this.visualRoot.position.y = this.FLOAT_Y;
+    }
+
+    // Cinematic camera: slow orbit around boss
+    if (cam) {
+      const bossPos = ctx.bossPos;
+      if (t < 0.7) {
+        // Slow push from player side
+        const tp = t / 0.7;
+        const ease = tp < 0.5 ? 2 * tp * tp : -1 + (4 - 2 * tp) * tp;
+        const startX = ctx.playerPos.x * 0.4;
+        const startZ = ctx.playerPos.z * 0.5;
+        const endX = bossPos.x;
+        const endZ = bossPos.z + 6;
+        cam.position.lerp(new THREE.Vector3(
+          THREE.MathUtils.lerp(startX, endX, ease),
+          THREE.MathUtils.lerp(4, 2.5, ease),
+          THREE.MathUtils.lerp(startZ, endZ, ease)
+        ), 0.12);
+        cam.lookAt(bossPos.x, 1.5, bossPos.z);
+      } else if (t < 2.2) {
+        // Low angle hero shot with slight orbit
+        const tp = (t - 0.7) / 1.5;
+        const angle = tp * Math.PI * 0.15;
+        const radius = 6.0 - tp * 0.5;
+        const height = 1.8 + Math.sin(tp * Math.PI) * 0.4;
+        const target = new THREE.Vector3(
+          bossPos.x + Math.sin(angle) * radius,
+          height,
+          bossPos.z + Math.cos(angle) * radius
+        );
+        cam.position.lerp(target, 0.08);
+        cam.lookAt(bossPos.x, 2.5, bossPos.z);
+      } else {
+        // Hold
+        const target = new THREE.Vector3(bossPos.x, 2.5, bossPos.z + 5.5);
+        cam.position.lerp(target, 0.05);
+        cam.lookAt(bossPos.x, 2.5, bossPos.z);
+      }
+    }
+
+    return t < duration;
+  }
+
+  _updatePhaseChangeCinematic(t, dt, ctx) {
+    const cfg = ctx.config;
+    const cam = ctx.camera;
+    const duration = cfg.phaseChangeDuration;
+    const bossPos = ctx.bossPos;
+
+    // Void Witch phase change: ring acceleration, core surge, fog burst
+    this._ringRotation += dt * 4;
+    if (this._voidCoreMat) {
+      this._voidCoreMat.opacity = 0.8 + Math.sin(t * 6) * 0.2;
+    }
+    // Rise slightly
+    const riseOffset = Math.sin(Math.min(1, t / duration) * Math.PI) * 0.3;
+    this.visualRoot.position.y = this.FLOAT_Y + riseOffset;
+
+    // Burst at 0.3s
+    if (t >= 0.3 && !this._vwPhaseChangeBurst) {
+      this._vwPhaseChangeBurst = true;
+      ctx.explosion?.playMagicExplosion(
+        new THREE.Vector3(bossPos.x, 1.2, bossPos.z), 2.0
+      );
+      ctx.audio?.playExplosion(2.0, 6);
+      ctx.hud?.screenFlash();
+      ctx.onShake?.(1.0);
+    }
+
+    // Camera: push close then hold
+    if (cam) {
+      if (t < duration * 0.4) {
+        const tp = t / (duration * 0.4);
+        const target = new THREE.Vector3(bossPos.x, 2.5, bossPos.z + 4.5);
+        cam.position.lerp(target, 0.08 * tp);
+        cam.lookAt(bossPos.x, 2.5, bossPos.z);
+      } else {
+        // Slight orbit
+        const tp = (t - duration * 0.4) / (duration * 0.6);
+        const angle = tp * 0.4;
+        const target = new THREE.Vector3(
+          bossPos.x + Math.sin(angle) * 4.5,
+          2.3 + Math.sin(tp * Math.PI) * 0.3,
+          bossPos.z + Math.cos(angle) * 4.5
+        );
+        cam.position.lerp(target, 0.05);
+        cam.lookAt(bossPos.x, 2.5, bossPos.z);
+      }
+    }
+
+    return t < duration;
+  }
+
+  _updateDeathCinematic(t, dt, ctx) {
+    const cfg = ctx.config;
+    const cam = ctx.camera;
+    const duration = cfg.deathDuration;
+    const bossPos = ctx.bossPos;
+    const explosion = ctx.explosion;
+    const audio = ctx.audio;
+    const hud = ctx.hud;
+    const onShake = ctx.onShake;
+
+    // Void Witch death: no 5-explosion Warden style.
+    // 0~0.5s: Stagger (handled by boss.update death animation)
+    // 0.5~1.4s: Cracks + collapse — core destabilizes
+    // 1.4~2.3s: Dissolve — scale down, opacity fade
+    // 2.4~2.7s: Core collapse + flash + shake
+
+    if (t < 0.5) {
+      // Stagger — boss.update() handles the wobble
+    } else if (t < 1.4) {
+      // Cracks + collapse
+      if (this._vwDeathStage < 1) {
+        this._vwDeathStage = 1;
+        // Small crack burst
+        explosion?.playMagicExplosion(
+          new THREE.Vector3(bossPos.x, 1.0, bossPos.z), 0.8
+        );
+        audio?.playExplosion(0.8, 8);
+        onShake?.(0.4);
+      }
+      // Core flickers more violently
+      if (this._voidCoreMat) {
+        this._voidCoreMat.opacity = Math.max(0,
+          0.6 - (t - 0.5) * 0.3 + Math.sin(t * 20) * 0.25
+        );
+      }
+    } else if (t < 2.3) {
+      // Dissolve
+      if (this._vwDeathStage < 2) {
+        this._vwDeathStage = 2;
+        explosion?.playMagicExplosion(
+          new THREE.Vector3(bossPos.x, 1.2, bossPos.z), 1.2
+        );
+        audio?.playExplosion(1.2, 7);
+        onShake?.(0.5);
+      }
+      const dp = (t - 1.4) / 0.9;
+      // Accelerate ring spin
+      this._ringRotation += dt * (5 + dp * 10);
+      // Scale down
+      this.visualRoot.scale.setScalar(Math.max(0.01, 1 - dp * 0.6));
+      // Rings fade
+      if (this._arcaneRing1Mat) this._arcaneRing1Mat.opacity = Math.max(0, 0.6 - dp * 0.6);
+      if (this._arcaneRing2Mat) this._arcaneRing2Mat.opacity = Math.max(0, 0.5 - dp * 0.5);
+    } else if (t < 2.7) {
+      // Core collapse + flash + shake
+      if (this._vwDeathStage < 3) {
+        this._vwDeathStage = 3;
+        explosion?.playMagicExplosion(
+          new THREE.Vector3(bossPos.x, 1.0, bossPos.z), 2.5
+        );
+        audio?.playExplosion(2.5, 4);
+        hud?.screenFlash();
+        onShake?.(1.0);
+        // Final visual collapse
+        if (this._voidCoreMat) this._voidCoreMat.opacity = 0;
+        if (this._coreLight) this._coreLight.intensity = 0;
+        this.visualRoot.scale.setScalar(0.01);
+      }
+    }
+
+    // Camera: slow push towards boss
+    if (cam) {
+      const tp = Math.min(1, t / duration);
+      const startZ = bossPos.z + 7;
+      const endZ = bossPos.z + 4.5;
+      const z = THREE.MathUtils.lerp(startZ, endZ, tp < 0.5 ? 2 * tp * tp : -1 + (4 - 2 * tp) * tp);
+      const y = 2.5 + Math.sin(tp * Math.PI) * 0.5;
+      const target = new THREE.Vector3(bossPos.x, y, z);
+      cam.position.lerp(target, 0.05);
+      const lookY = THREE.MathUtils.lerp(2.5, 1.0, tp);
+      cam.lookAt(bossPos.x, lookY, bossPos.z);
+    }
+
+    return t < duration;
   }
 
   /**

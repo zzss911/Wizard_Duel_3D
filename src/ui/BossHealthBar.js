@@ -11,11 +11,20 @@ export class BossHealthBar {
     this.fillEl = document.getElementById('boss-bar-fill');
   }
 
-  show(name, subtitle, phase) {
+  show(name, subtitle, phase, themeColor) {
     if (this.nameEl) this.nameEl.textContent = name;
     if (this.subEl) this.subEl.textContent = subtitle;
     if (this.phaseEl) this.phaseEl.textContent = phase;
     if (this.fillEl) this.fillEl.style.width = '100%';
+    // Apply theme color to the health bar fill if provided
+    if (themeColor && this.fillEl) {
+      this.fillEl.style.background = themeColor;
+      this.fillEl.style.boxShadow = `0 0 12px ${themeColor}, 0 0 4px ${themeColor}`;
+    } else if (this.fillEl) {
+      // Reset to default (Warden red)
+      this.fillEl.style.background = '';
+      this.fillEl.style.boxShadow = '';
+    }
     this.el.classList.add('show');
   }
 
