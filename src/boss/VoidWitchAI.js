@@ -539,8 +539,8 @@ export class VoidWitchAI {
     this._blinkSub = BLINK_SUB.VANISH;
     this._blinkSubT = 0;
 
-    // P1-2: Open invulnerability at the start of VANISH.
-    // Window covers vanish (0.15s) + relocate (0.10s) ≈ 0.25s.
+    // Open invulnerability at the start of VANISH.
+    // Window covers vanish (0.15s) + relocate (0.10s) = 0.25s.
     const cfg = SKILL_CONFIG[SKILL.BLINK];
     this.boss.setInvulnerable(cfg.invulnDuration);
   }
@@ -554,9 +554,14 @@ export class VoidWitchAI {
         const progress = Math.min(1, this._blinkSubT / cfg.vanishDuration);
         this.boss.setBlinkVanish(progress);
 
-        // Burst at departure point
         if (this._blinkSubT >= cfg.vanishDuration) {
+          // VANISH complete — finalize vanish visuals, teleport, hide marker.
+          // These run exactly once at the VANISH→RELOCATE boundary.
+          this.boss.setBlinkVanish(1);
           this.effects.burst(this.boss.position.clone().setY(1.0), 0x6f3cff, 14, 0.12);
+          this.boss.teleportTo(this._blinkDest);
+          this.boss.hideBlinkMarker();
+
           this._blinkSub = BLINK_SUB.RELOCATE;
           this._blinkSubT = 0;
         }
@@ -564,29 +569,28 @@ export class VoidWitchAI {
       }
 
       case BLINK_SUB.RELOCATE: {
-        // Instant teleport
-        this.boss.teleportTo(this._blinkDest);
+        // Hold relocated state for relocateDuration (0.10s).
+        // Boss stays nearly invisible; arrival burst fires once on entry.
+        if (this._blinkSubT >= cfg.relocateDuration) {
+          // RELOCATE complete — arrival burst, then transition to REAPPEAR.
+          this.effects.burst(this.boss.position.clone().setY(1.0), 0x9a6cff, 10, 0.1);
 
-        // Hide marker (boss is now there)
-        this.boss.hideBlinkMarker();
+          // Clear blink invulnerability before REAPPEAR so boss is damageable.
+          this.boss.clearInvulnerability?.();
 
-        // Burst at arrival point
-        this.effects.burst(this.boss.position.clone().setY(1.0), 0x9a6cff, 10, 0.1);
-
-        this._blinkSub = BLINK_SUB.REAPPEAR;
-        this._blinkSubT = 0;
+          this._blinkSub = BLINK_SUB.REAPPEAR;
+          this._blinkSubT = 0;
+        }
         break;
       }
 
       case BLINK_SUB.REAPPEAR: {
         const progress = Math.min(1, this._blinkSubT / cfg.reappearDuration);
-        // P2-1: Boss owns the reappear visual
+        // Boss owns the reappear visual
         this.boss.setBlinkReappear(progress);
 
         if (this._blinkSubT >= cfg.reappearDuration) {
           this.boss.endBlink();
-          // P1-2: Clear blink invulnerability before entering RECOVER
-          this.boss.clearInvulnerability?.();
           this._setState(AI_STATE.RECOVER);
         }
         break;
