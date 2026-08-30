@@ -44,21 +44,21 @@ const SKILL_CONFIG = {
     shotInterval: 0.14,
     // Phase 1: 3 projectiles, fan [-8°, 0°, +8°]
     phase1: { count: 3, fan: [-8, 0, 8] },
-    // Phase 2: 5 projectiles, fan [-14, -7, 0, 7, 14]
+    // Phase 2: 5 projectiles, fan [-14°, -7°, 0°, +7°, +14°]
     phase2: { count: 5, fan: [-14, -7, 0, 7, 14] },
   },
   [SKILL.BLINK]: {
     telegraph: 0.62,
     recover: 0.7,
-    // Sub-phases during the BLINK state
+    // Sub-phase durations
     vanishDuration: 0.15,
-    relocateDuration: 0.1,
-    reappearDuration: 0.2,
-    invulnDuration: 0.28,
+    relocateDuration: 0.10,
+    reappearDuration: 0.20,
+    // Invulnerability window: covers vanish + relocate
+    invulnDuration: 0.25,
     // Destination constraints
     minDist: 4.5,
     maxDist: 9.0,
-    angleSpread: 0, // set per-phase
     phase1: { angles: [-60, 60] },
     phase2: { angles: [-120, -60, 60, 120] },
   },
@@ -79,11 +79,14 @@ const STATE_ANIM_MAP = {
 
 // Blink sub-states within the BLINK state
 const BLINK_SUB = {
-  TELEGRAPH: 'telegraph',
   VANISH: 'vanish',
   RELOCATE: 'relocate',
   REAPPEAR: 'reappear',
 };
+
+// Deterministic fallback angles (degrees) for blink destination
+const FALLBACK_ANGLES = [90, -90, 135, -135, 180, 0];
+const FALLBACK_DISTANCES = [9, 8, 7, 6];
 
 export class VoidWitchAI {
   /**
@@ -134,9 +137,10 @@ export class VoidWitchAI {
     this._blinkSub = null;
     this._blinkSubT = 0;
     this._blinkDest = new THREE.Vector3();
-    this._blinkInvulnT = 0;
 
-    // Projectile ownership — track for cleanup
+    // Projectile ownership — track for cleanup.
+    // We store the Projectile reference; on cleanup we verify p.owner === this.boss
+    // before despawning, so a pooled projectile reused by the player is never touched.
     this._ownedProjectiles = new Set();
 
     // Scratch vectors (avoid per-frame allocation)
@@ -161,14 +165,13 @@ export class VoidWitchAI {
     this._lastSkill = null;
     this._lastSkillRepeat = 0;
     this._barrageShotsFired = 0;
-    this._barrageShotTimer = 0;
     this._barrageDirections = [];
     this._barrageCount = 0;
     this._blinkSub = null;
     this._blinkSubT = 0;
-    this._blinkInvulnT = 0;
     this._ownedProjectiles.clear();
     this.boss.cancelBlink?.();
+    this.boss.clearInvulnerability?.();
     this.boss.setBossState('IDLE');
   }
 
@@ -179,7 +182,7 @@ export class VoidWitchAI {
     // --- Death check ---
     if (b.dead) {
       if (this._state !== AI_STATE.DEAD) {
-        this._cancelCurrentSkill();
+        this.cancelCurrentSkill();
         this._setState(AI_STATE.DEAD);
       }
       return;
@@ -191,7 +194,7 @@ export class VoidWitchAI {
       if (this._state === AI_STATE.TELEGRAPH ||
           this._state === AI_STATE.BARRAGE ||
           this._state === AI_STATE.BLINK) {
-        this._cancelCurrentSkill();
+        this.cancelCurrentSkill();
         this._setState(AI_STATE.IDLE);
         this._stateT = 0;
       }
@@ -200,15 +203,12 @@ export class VoidWitchAI {
 
     this._stateT += dt;
 
-    // Tick blink invulnerability
-    if (this._blinkInvulnT > 0) {
-      this._blinkInvulnT = Math.max(0, this._blinkInvulnT - dt);
-    }
-
-    // Clean up dead projectiles from ownership set
+    // Clean up dead projectiles from ownership set.
+    // Also remove any projectile whose owner is no longer this boss
+    // (pool reused it for the player).
     if (this._ownedProjectiles.size > 0) {
       for (const p of this._ownedProjectiles) {
-        if (!p.active) {
+        if (!p.active || p.owner !== this.boss) {
           this._ownedProjectiles.delete(p);
         }
       }
@@ -339,7 +339,9 @@ export class VoidWitchAI {
 
   triggerPhaseChange() {
     if (this._state === AI_STATE.PHASE_CHANGE || this._state === AI_STATE.DEAD) return;
-    this._cancelCurrentSkill();
+    // Cancel blink first — clears blink invulnerability.
+    // Phase Change will then set its own 3s invulnerability.
+    this.cancelCurrentSkill();
     this._setState(AI_STATE.PHASE_CHANGE);
     this.boss.setInvulnerable(3.0);
   }
@@ -438,8 +440,16 @@ export class VoidWitchAI {
       this.boss.getCastOrigin(this._tmp);
       this.effects.burst(this._tmp, 0x6f3cff, 6, 0.1);
     } else if (skill === SKILL.BLINK) {
-      // Compute destination and show marker
+      // Compute destination and show marker.
+      // If no valid destination exists, safe-cancel the blink.
       const dest = this._computeBlinkDestination(player, arena);
+      if (!dest) {
+        // No valid blink destination — cancel and go to recover
+        this.boss.setCastGlow(0);
+        this.boss.hideBlinkMarker?.();
+        this._setState(AI_STATE.RECOVER);
+        return;
+      }
       this._blinkDest.copy(dest);
       this.boss.beginBlink();
       this.boss.showBlinkMarker(dest);
@@ -526,10 +536,13 @@ export class VoidWitchAI {
   // ==================== Void Blink ====================
 
   _beginBlinkExecute() {
-    const cfg = SKILL_CONFIG[SKILL.BLINK];
     this._blinkSub = BLINK_SUB.VANISH;
     this._blinkSubT = 0;
-    this.boss.beginBlink();
+
+    // P1-2: Open invulnerability at the start of VANISH.
+    // Window covers vanish (0.15s) + relocate (0.10s) ≈ 0.25s.
+    const cfg = SKILL_CONFIG[SKILL.BLINK];
+    this.boss.setInvulnerable(cfg.invulnDuration);
   }
 
   _updateBlink(dt, player, arena) {
@@ -554,10 +567,6 @@ export class VoidWitchAI {
         // Instant teleport
         this.boss.teleportTo(this._blinkDest);
 
-        // Grant brief invulnerability
-        this._blinkInvulnT = cfg.invulnDuration;
-        this.boss.setInvulnerable(cfg.invulnDuration);
-
         // Hide marker (boss is now there)
         this.boss.hideBlinkMarker();
 
@@ -571,16 +580,13 @@ export class VoidWitchAI {
 
       case BLINK_SUB.REAPPEAR: {
         const progress = Math.min(1, this._blinkSubT / cfg.reappearDuration);
-        // Fade back in — scale from small to 1
-        if (this.boss.visualRoot) {
-          this.boss.visualRoot.scale.setScalar(Math.max(0.01, progress));
-        }
-        if (this.boss._voidCoreMat) {
-          this.boss._voidCoreMat.opacity = progress * 0.8;
-        }
+        // P2-1: Boss owns the reappear visual
+        this.boss.setBlinkReappear(progress);
 
         if (this._blinkSubT >= cfg.reappearDuration) {
           this.boss.endBlink();
+          // P1-2: Clear blink invulnerability before entering RECOVER
+          this.boss.clearInvulnerability?.();
           this._setState(AI_STATE.RECOVER);
         }
         break;
@@ -588,10 +594,12 @@ export class VoidWitchAI {
     }
   }
 
+  // ==================== Blink Destination ====================
+
   /**
-   * Compute blink destination:
-   * 6-9m from player, angle offset from player→boss direction,
-   * arena bounds check, pillar avoidance, min 4.5m from player.
+   * Compute blink destination using randomized candidates first,
+   * then deterministic fallback angles. Returns null if no valid
+   * destination can be found (caller must safe-cancel the blink).
    */
   _computeBlinkDestination(player, arena) {
     const cfg = SKILL_CONFIG[SKILL.BLINK];
@@ -603,103 +611,110 @@ export class VoidWitchAI {
       .setY(0);
     const baseAngle = Math.atan2(playerToBoss.z, playerToBoss.x);
 
-    const arenaRadius = arena.radius || 18;
-    const bossRadius = this.boss.radius || 0.8;
-    const maxAttempts = 8;
     const result = new THREE.Vector3();
 
+    // --- Phase 1: Random candidates ---
+    const maxAttempts = 8;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      // Pick a random angle option
       const angleOffset = THREE.MathUtils.degToRad(
         angleOptions[Math.floor(Math.random() * angleOptions.length)]
       );
-      // Add small random jitter
       const jitter = (Math.random() - 0.5) * THREE.MathUtils.degToRad(15);
       const angle = baseAngle + angleOffset + jitter;
 
-      // Distance: random between min and max
       const dist = cfg.minDist + Math.random() * (cfg.maxDist - cfg.minDist);
 
-      // Candidate position: from player, at angle, at distance
       result.set(
         player.position.x + Math.cos(angle) * dist,
         0,
         player.position.z + Math.sin(angle) * dist
       );
 
-      // Check arena bounds
-      const flatDist = Math.hypot(result.x, result.z);
-      if (flatDist > arenaRadius - bossRadius - 1.0) {
-        continue;
+      if (this._isValidBlinkDestination(result, player, arena)) {
+        return result;
       }
+    }
 
-      // Check min distance from player
-      const distToPlayer = result.distanceTo(player.position);
-      if (distToPlayer < cfg.minDist) {
-        continue;
-      }
+    // --- Phase 2: Deterministic fallback candidates ---
+    for (const fbAngle of FALLBACK_ANGLES) {
+      for (const fbDist of FALLBACK_DISTANCES) {
+        const angle = baseAngle + THREE.MathUtils.degToRad(fbAngle);
+        result.set(
+          player.position.x + Math.cos(angle) * fbDist,
+          0,
+          player.position.z + Math.sin(angle) * fbDist
+        );
 
-      // Check pillar avoidance
-      let blocked = false;
-      if (arena.pillars) {
-        for (const pil of arena.pillars) {
-          const d = Math.hypot(result.x - pil.x, result.z - pil.z);
-          const minPillarDist = pil.r + bossRadius + 1.0;
-          if (d < minPillarDist) {
-            blocked = true;
-            break;
-          }
+        if (this._isValidBlinkDestination(result, player, arena)) {
+          return result;
         }
       }
-      if (blocked) continue;
-
-      // Valid destination found
-      return result;
     }
 
-    // Fallback: just go behind boss from player at minDist
-    const fallbackAngle = baseAngle;
-    result.set(
-      player.position.x + Math.cos(fallbackAngle) * cfg.minDist,
-      0,
-      player.position.z + Math.sin(fallbackAngle) * cfg.minDist
-    );
-    // Clamp to arena
-    const flat = Math.hypot(result.x, result.z);
-    const maxR = arenaRadius - bossRadius - 1.0;
-    if (flat > maxR) {
-      result.x *= maxR / flat;
-      result.z *= maxR / flat;
+    // No valid destination found
+    return null;
+  }
+
+  /**
+   * Unified validator for blink destination candidates.
+   * Checks: finite coordinates, arena bounds, min player distance, pillar clearance.
+   */
+  _isValidBlinkDestination(pos, player, arena) {
+    // 1. Finite coordinates
+    if (!isFinite(pos.x) || !isFinite(pos.z)) return false;
+
+    const cfg = SKILL_CONFIG[SKILL.BLINK];
+    const bossRadius = this.boss.radius || 0.8;
+    const arenaRadius = arena.radius || 18;
+
+    // 2. Arena bounds
+    const distFromCenter = Math.hypot(pos.x, pos.z);
+    const maxArenaDist = arenaRadius - bossRadius - 1.0;
+    if (distFromCenter > maxArenaDist) return false;
+
+    // 3. Min distance from player
+    const distToPlayer = pos.distanceTo(player.position);
+    if (distToPlayer < cfg.minDist) return false;
+
+    // 4. Pillar clearance
+    if (arena.pillars) {
+      for (const pil of arena.pillars) {
+        const d = Math.hypot(pos.x - pil.x, pos.z - pil.z);
+        const minPillarDist = pil.r + bossRadius + 1.0;
+        if (d < minPillarDist) return false;
+      }
     }
-    return result;
+
+    return true;
   }
 
   // ==================== Interrupt / Cleanup ====================
 
   /**
-   * Cancel any in-progress skill: hide markers, restore visuals,
-   * clear invulnerability, despawn owned projectiles.
+   * PUBLIC contract: Cancel any in-progress skill.
+   * Called by the controller on interrupts (player death, boss death, phase change).
+   *
+   * - Hides blink markers, restores visuals
+   * - Clears blink invulnerability
+   * - Despawns ONLY projectiles still owned by this boss
    */
-  _cancelCurrentSkill() {
-    // Cancel blink visuals
+  cancelCurrentSkill() {
+    // Cancel blink visuals + clear blink invulnerability
     this.boss.cancelBlink?.();
+    this.boss.clearInvulnerability?.();
     this.boss.setCastGlow(0);
     this.boss.hideBlinkMarker?.();
     this._blinkSub = null;
-    this._blinkInvulnT = 0;
 
     // Cancel barrage
     this._barrageShotsFired = 0;
     this._barrageDirections = [];
     this._barrageShotTimer = 0;
 
-    // Despawn owned projectiles
-    this._despawnOwnedProjectiles();
-  }
-
-  _despawnOwnedProjectiles() {
+    // Despawn owned projectiles — verify ownership before despawning
+    // so a pooled projectile reused by the player is never touched.
     for (const p of this._ownedProjectiles) {
-      if (p && p.active) {
+      if (p && p.active && p.owner === this.boss) {
         p.despawn();
       }
     }
@@ -715,7 +730,7 @@ export class VoidWitchAI {
    * - Does NOT call boss.destroy() — the controller handles that separately
    */
   destroy() {
-    this._cancelCurrentSkill();
+    this.cancelCurrentSkill();
 
     // Null out callbacks
     this.onShake = null;

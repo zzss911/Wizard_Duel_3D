@@ -338,9 +338,7 @@ export class BossBattleController {
     // 检查玩家死亡
     if (player.dead && this.state !== BOSS_STATE.PLAYER_DEAD) {
       // Stop AI skills — cancel any in-progress attack
-      if (this.ai && typeof this.ai._cancelCurrentSkill === 'function') {
-        this.ai._cancelCurrentSkill();
-      }
+      this.ai?.cancelCurrentSkill?.();
       this.state = BOSS_STATE.PLAYER_DEAD;
       this.endTime = performance.now();
       this.timer = 0;
@@ -426,9 +424,7 @@ export class BossBattleController {
     this.endTime = performance.now();
     this.timer = 0;
     // Cancel any in-progress AI skill (hide markers, restore visuals)
-    if (this.ai && typeof this.ai._cancelCurrentSkill === 'function') {
-      this.ai._cancelCurrentSkill();
-    }
+    this.ai?.cancelCurrentSkill?.();
     // 清空弹道
     for (const p of this.combat.pool) p.despawn();
     // BGM 衰减

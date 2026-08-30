@@ -472,6 +472,11 @@ export class VoidWitchBoss {
     this._invulnT = Math.max(this._invulnT, t);
   }
 
+  /** Clear all invulnerability (used by blink cleanup / cancel) */
+  clearInvulnerability() {
+    this._invulnT = 0;
+  }
+
   faceTowards(point, dt) {
     const targetYaw = Math.atan2(point.x - this.position.x, point.z - this.position.z);
     let diff = targetYaw - this._facing;
@@ -586,18 +591,17 @@ export class VoidWitchBoss {
   }
 
   // ==================== Blink Visual API ====================
+  // AI = behavior/timing, Boss = visual.
+  // All blink visual mutations live here so cancelBlink can fully restore.
 
-  /**
-   * Called by AI when blink sequence begins. Ensures the blink marker
-   * mesh exists (created lazily, reused for all blinks).
-   */
+  /** Called by AI when blink sequence begins. */
   beginBlink() {
     this._blinkActive = true;
     this._ensureBlinkMarker();
   }
 
   /**
-   * Progressively fade out the boss body during the vanish phase.
+   * Fade out boss body during vanish phase.
    * @param {number} progress 0→1 (0 = visible, 1 = fully vanished)
    */
   setBlinkVanish(progress) {
@@ -605,14 +609,29 @@ export class VoidWitchBoss {
     const p = Math.max(0, Math.min(1, progress));
     if (this.visualRoot) {
       this.visualRoot.scale.setScalar(Math.max(0.01, 1 - p * 0.99));
-      // Also fade opacity of additive materials
-      if (this._voidCoreMat) this._voidCoreMat.opacity = (1 - p) * 0.8;
+    }
+    if (this._voidCoreMat) {
+      this._voidCoreMat.opacity = (1 - p) * 0.8;
+    }
+  }
+
+  /**
+   * Reappear animation: scale from small → full, fade core opacity back.
+   * @param {number} progress 0→1
+   */
+  setBlinkReappear(progress) {
+    if (!this._blinkActive) return;
+    const p = Math.max(0, Math.min(1, progress));
+    if (this.visualRoot) {
+      this.visualRoot.scale.setScalar(Math.max(0.01, p));
+    }
+    if (this._voidCoreMat) {
+      this._voidCoreMat.opacity = p * 0.8;
     }
   }
 
   /**
    * Instantly relocate the boss to a new position during blink.
-   * Called at the teleport moment (vanish complete, before reappear).
    * @param {THREE.Vector3} position — new world position
    */
   teleportTo(position) {
@@ -622,25 +641,38 @@ export class VoidWitchBoss {
   }
 
   /**
-   * End the blink sequence — restore boss visibility.
+   * End the blink sequence — fully restore visuals to phase baseline.
    */
   endBlink() {
     this._blinkActive = false;
-    if (this.visualRoot) {
-      this.visualRoot.scale.setScalar(1);
-    }
-    if (this._voidCoreMat) this._voidCoreMat.opacity = 0.8;
+    this._restoreBlinkVisuals();
     this.hideBlinkMarker();
   }
 
-  /** Cancel any in-progress blink (for interrupts) */
+  /**
+   * Cancel any in-progress blink (for interrupts).
+   * Fully restores visuals to phase baseline.
+   */
   cancelBlink() {
     if (!this._blinkActive) return;
     this._blinkActive = false;
+    this._restoreBlinkVisuals();
+    this.hideBlinkMarker();
+  }
+
+  /**
+   * Restore all visuals that blink may have mutated.
+   * - visualRoot scale → 1
+   * - void core opacity → phase baseline (0.8 P1, 1.0 P2)
+   *   (the normal update() pulse will take over next frame)
+   */
+  _restoreBlinkVisuals() {
     if (this.visualRoot) {
       this.visualRoot.scale.setScalar(1);
     }
-    this.hideBlinkMarker();
+    if (this._voidCoreMat) {
+      this._voidCoreMat.opacity = this.phase2 ? 1.0 : 0.8;
+    }
   }
 
   /**
