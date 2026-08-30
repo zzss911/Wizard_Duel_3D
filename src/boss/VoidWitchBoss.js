@@ -88,8 +88,13 @@ export class VoidWitchBoss {
     this._modelLoaded = false;
     this._modelLoading = false;
     this._usingFallback = false;
+    this._usingGLB = false;
     this._destroyed = false;
     this._modelHeight = 2.4;
+
+    // Ownership tracking — only resources this instance created
+    this._ownedGeometries = new Set();
+    this._ownedMaterials = new Set();
 
     // Procedural animation state
     this._vwState = 'IDLE';
@@ -165,16 +170,17 @@ export class VoidWitchBoss {
     this._modelHeight = size2.y;
 
     // Enable shadows, clone materials per-instance so each boss can
-    // independently modify emissive.
+    // independently modify emissive. Geometry stays shared (source-owned)
+    // and is NOT added to _ownedGeometries.
     gltfScene.traverse((child) => {
       if (child.isMesh) {
         child.castShadow = true;
         child.receiveShadow = true;
 
-        // Clone material(s) — geometry stays shared (source-owned)
         if (Array.isArray(child.material)) {
-          child.material = child.material.map(m => {
+          child.material = child.material.map((m) => {
             const cloned = m.clone();
+            this._ownedMaterials.add(cloned);
             if (cloned.emissive) {
               cloned._origEmissive = cloned.emissive.getHex();
               cloned._origEmissiveIntensity = cloned.emissiveIntensity || 0;
@@ -183,6 +189,7 @@ export class VoidWitchBoss {
           });
         } else {
           const cloned = child.material.clone();
+          this._ownedMaterials.add(cloned);
           if (cloned.emissive) {
             cloned._origEmissive = cloned.emissive.getHex();
             cloned._origEmissiveIntensity = cloned.emissiveIntensity || 0;
@@ -218,51 +225,50 @@ export class VoidWitchBoss {
       color: COL.skin, roughness: 0.3, metalness: 0.1,
     });
 
+    // Track procedural material ownership
+    this._ownedMaterials.add(robeMat);
+    this._ownedMaterials.add(torsoMat);
+    this._ownedMaterials.add(skinMat);
+
     // Robe — inverted cone for flowing robe (not too long)
-    const robe = new THREE.Mesh(
-      new THREE.ConeGeometry(0.55, 1.4, 10, 1, true),
-      robeMat
-    );
+    const robeGeo = new THREE.ConeGeometry(0.55, 1.4, 10, 1, true);
+    this._ownedGeometries.add(robeGeo);
+    const robe = new THREE.Mesh(robeGeo, robeMat);
     robe.position.y = 0.7;
     robe.castShadow = true;
 
     // Torso upper — slender capsule
-    const torso = new THREE.Mesh(
-      new THREE.CapsuleGeometry(0.22, 0.5, 8, 12),
-      torsoMat
-    );
+    const torsoGeo = new THREE.CapsuleGeometry(0.22, 0.5, 8, 12);
+    this._ownedGeometries.add(torsoGeo);
+    const torso = new THREE.Mesh(torsoGeo, torsoMat);
     torso.position.y = 1.4;
     torso.castShadow = true;
 
     // Head — sphere
-    const head = new THREE.Mesh(
-      new THREE.SphereGeometry(0.18, 12, 12),
-      skinMat
-    );
+    const headGeo = new THREE.SphereGeometry(0.18, 12, 12);
+    this._ownedGeometries.add(headGeo);
+    const head = new THREE.Mesh(headGeo, skinMat);
     head.position.y = 1.85;
     head.castShadow = true;
 
     // Hood — cone over head
-    const hood = new THREE.Mesh(
-      new THREE.ConeGeometry(0.25, 0.4, 8),
-      robeMat
-    );
+    const hoodGeo = new THREE.ConeGeometry(0.25, 0.4, 8);
+    this._ownedGeometries.add(hoodGeo);
+    const hood = new THREE.Mesh(hoodGeo, robeMat);
     hood.position.y = 2.0;
     hood.castShadow = true;
 
     // Arms — thin capsules
-    const armL = new THREE.Mesh(
-      new THREE.CapsuleGeometry(0.08, 0.5, 6, 8),
-      robeMat
-    );
+    const armLGeo = new THREE.CapsuleGeometry(0.08, 0.5, 6, 8);
+    this._ownedGeometries.add(armLGeo);
+    const armL = new THREE.Mesh(armLGeo, robeMat);
     armL.position.set(-0.28, 1.4, 0);
     armL.rotation.z = 0.3;
     armL.castShadow = true;
 
-    const armR = new THREE.Mesh(
-      new THREE.CapsuleGeometry(0.08, 0.5, 6, 8),
-      robeMat
-    );
+    const armRGeo = new THREE.CapsuleGeometry(0.08, 0.5, 6, 8);
+    this._ownedGeometries.add(armRGeo);
+    const armR = new THREE.Mesh(armRGeo, robeMat);
     armR.position.set(0.28, 1.4, 0);
     armR.rotation.z = -0.3;
     armR.castShadow = true;
@@ -286,10 +292,12 @@ export class VoidWitchBoss {
 
   _addVoidCore() {
     const coreGeo = new THREE.SphereGeometry(0.1, 12, 12);
+    this._ownedGeometries.add(coreGeo);
     const coreMat = new THREE.MeshBasicMaterial({
       color: COL.voidCore, transparent: true, opacity: 0.8,
       blending: THREE.AdditiveBlending, depthWrite: false,
     });
+    this._ownedMaterials.add(coreMat);
     this._voidCore = new THREE.Mesh(coreGeo, coreMat);
     this._voidCore.position.set(0, 1.5, 0.15);
     this._voidCoreMat = coreMat;
@@ -306,10 +314,12 @@ export class VoidWitchBoss {
   _addArcaneRings() {
     // Ring 1 — horizontal, around waist
     const ring1Geo = new THREE.TorusGeometry(0.5, 0.02, 8, 32);
+    this._ownedGeometries.add(ring1Geo);
     const ring1Mat = new THREE.MeshBasicMaterial({
       color: COL.ring, transparent: true, opacity: 0.6,
       blending: THREE.AdditiveBlending, depthWrite: false,
     });
+    this._ownedMaterials.add(ring1Mat);
     this._arcaneRing1 = new THREE.Mesh(ring1Geo, ring1Mat);
     this._arcaneRing1.position.set(0, 1.3, 0);
     this._arcaneRing1.rotation.x = Math.PI / 2;
@@ -318,10 +328,12 @@ export class VoidWitchBoss {
 
     // Ring 2 — tilted, around upper body
     const ring2Geo = new THREE.TorusGeometry(0.35, 0.015, 8, 32);
+    this._ownedGeometries.add(ring2Geo);
     const ring2Mat = new THREE.MeshBasicMaterial({
       color: COL.ring, transparent: true, opacity: 0.5,
       blending: THREE.AdditiveBlending, depthWrite: false,
     });
+    this._ownedMaterials.add(ring2Mat);
     this._arcaneRing2 = new THREE.Mesh(ring2Geo, ring2Mat);
     this._arcaneRing2.position.set(0, 1.6, 0);
     this._arcaneRing2.rotation.x = Math.PI / 2 + 0.3;
@@ -334,10 +346,12 @@ export class VoidWitchBoss {
 
   _addFloatingOrb() {
     const orbGeo = new THREE.SphereGeometry(0.08, 12, 12);
+    this._ownedGeometries.add(orbGeo);
     const orbMat = new THREE.MeshBasicMaterial({
       color: COL.orb, transparent: true, opacity: 0.9,
       blending: THREE.AdditiveBlending, depthWrite: false,
     });
+    this._ownedMaterials.add(orbMat);
     this._floatingOrb = new THREE.Mesh(orbGeo, orbMat);
     this._floatingOrb.position.set(0.35, 1.5, 0.2);
     this._floatingOrbMat = orbMat;
@@ -359,6 +373,7 @@ export class VoidWitchBoss {
   _buildFog() {
     const n = 40;
     const geo = new THREE.BufferGeometry();
+    this._ownedGeometries.add(geo);
     this._fogPos = new Float32Array(n * 3);
     this._fogVel = new Float32Array(n * 3);
     this._fogPhase = new Float32Array(n);
@@ -379,6 +394,7 @@ export class VoidWitchBoss {
       color: COL.fog, size: 0.4, transparent: true, opacity: 0.25,
       blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true,
     });
+    this._ownedMaterials.add(this.fogMat);
 
     this.fog = new THREE.Points(geo, this.fogMat);
     this.fog.frustumCulled = false;
@@ -402,10 +418,11 @@ export class VoidWitchBoss {
       color: COL.rune, transparent: true, opacity: 0,
       blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
     });
-    this.groundRune = new THREE.Mesh(
-      new THREE.RingGeometry(0.7, 1.0, 32),
-      this.groundRuneMat
-    );
+    this._ownedMaterials.add(this.groundRuneMat);
+
+    const runeGeo = new THREE.RingGeometry(0.7, 1.0, 32);
+    this._ownedGeometries.add(runeGeo);
+    this.groundRune = new THREE.Mesh(runeGeo, this.groundRuneMat);
     this.groundRune.rotation.x = -Math.PI / 2;
     this.groundRune.visible = false;
     this.scene.add(this.groundRune);
@@ -778,30 +795,9 @@ export class VoidWitchBoss {
     if (this.fog) this.scene.remove(this.fog);
     if (this.groundRune) this.scene.remove(this.groundRune);
 
-    // Dispose geometries and materials in visualRoot
-    if (this.visualRoot) {
-      this.visualRoot.traverse((child) => {
-        if (child.geometry) child.geometry.dispose();
-        if (child.material) {
-          if (Array.isArray(child.material)) {
-            child.material.forEach(m => m.dispose());
-          } else {
-            child.material.dispose();
-          }
-        }
-      });
-    }
-
-    // Dispose ground rune
-    if (this.groundRune) {
-      this.groundRune.geometry.dispose();
-      this.groundRuneMat.dispose();
-    }
-
-    // Dispose fog
-    if (this.fog) {
-      this.fog.geometry.dispose();
-      this.fogMat.dispose();
-    }
+    // Dispose only instance-owned geometries and materials.
+    // GLB geometry is shared (source-owned) and is NOT in these Sets.
+    for (const g of this._ownedGeometries) g.dispose();
+    for (const m of this._ownedMaterials) m.dispose();
   }
 }
