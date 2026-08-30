@@ -166,6 +166,15 @@ export class VoidWitchBoss {
     if (this._modelLoading || this._modelLoaded) return;
     this._modelLoading = true;
 
+    // When GLB is explicitly disabled, use procedural fallback synchronously
+    // to avoid async microtask delay / LOADING flash.
+    if (!VOID_WITCH_GLB_ENABLED) {
+      this._buildFallbackMesh();
+      this._modelLoaded = true;
+      this._modelLoading = false;
+      return;
+    }
+
     loadVoidWitchGLB()
       .then((result) => {
         if (this._destroyed) return;
@@ -177,8 +186,7 @@ export class VoidWitchBoss {
       })
       .catch(() => {
         if (this._destroyed) return;
-        // GLB intentionally disabled — use procedural fallback directly.
-        // No console.warn needed since this is expected behavior.
+        // GLB failed — use procedural fallback.
         this._buildFallbackMesh();
         this._modelLoaded = true;
         this._modelLoading = false;
@@ -1178,15 +1186,25 @@ export class VoidWitchBoss {
     const riseOffset = Math.sin(Math.min(1, t / duration) * Math.PI) * 0.3;
     this.visualRoot.position.y = this.FLOAT_Y + riseOffset;
 
-    // Burst at 0.3s
+    // Burst at 0.3s — lightweight purple/cold-white Void effects
     if (t >= 0.3 && !this._vwPhaseChangeBurst) {
       this._vwPhaseChangeBurst = true;
-      ctx.explosion?.playMagicExplosion(
-        new THREE.Vector3(bossPos.x, 1.2, bossPos.z), 2.0
+      // Purple shockwave + particle burst + impact flash (not Warden MagicExplosion)
+      ctx.effects?.burst(
+        new THREE.Vector3(bossPos.x, 1.2, bossPos.z),
+        COL.voidGlow, 14, 0.18
       );
-      ctx.audio?.playExplosion(2.0, 6);
+      ctx.effects?.impactFlash(
+        new THREE.Vector3(bossPos.x, 1.2, bossPos.z),
+        COL.flash, 2.5
+      );
+      ctx.effects?.shockwave(
+        new THREE.Vector3(bossPos.x, 0.1, bossPos.z),
+        COL.voidCore, 6.0
+      );
+      ctx.audio?.playExplosion(1.0, 10);
       ctx.hud?.screenFlash();
-      ctx.onShake?.(1.0);
+      ctx.onShake?.(0.6);
     }
 
     // Camera: push close then hold

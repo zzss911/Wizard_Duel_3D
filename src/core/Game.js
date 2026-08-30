@@ -816,12 +816,13 @@ export class Game {
     this.arena.update(dt);
     this.props.update(dt);
 
-    // 摄像机：cinematic 期间由 CameraDirector 控制 + shake 叠加，否则正常更新
-    const cinematicActive = this.bossController.cameraDirector.update(dt);
-    if (!cinematicActive) {
+    // 摄像机：cinematic 期间由 CameraDirector 或 custom hook 控制 + shake 叠加，否则正常更新
+    const directorActive = this.bossController.cameraDirector.update(dt);
+    const customActive = this.bossController.isCustomCinematicActive?.() ?? false;
+    if (!directorActive && !customActive) {
       this.updateCamera(dt);
     } else {
-      // Cinematic mode: CameraDirector already set camera.position,
+      // Cinematic mode: CameraDirector or custom hook already set camera.position,
       // but we still need to apply shake on top
       this.shake.update(dt, this._shakeOffset);
       this.camera.position.add(this._shakeOffset);

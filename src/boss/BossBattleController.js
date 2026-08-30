@@ -52,6 +52,12 @@ export class BossBattleController {
     this._registryEntry = null;
     this._cinematicConfig = null;
 
+    // Cinematic state:
+    //   _bossCinematicCustom — boss declared it handles cinematic for this phase (sticky until phase ends)
+    //   _bossCinematicActive  — cinematic is currently playing this frame
+    this._bossCinematicCustom = false;
+    this._bossCinematicActive = false;
+
     // Cinematic systems
     this.cinematicUI = new BossCinematicUI();
     this.cameraDirector = new BossCameraDirector();
@@ -59,6 +65,26 @@ export class BossBattleController {
     // 临时光源（Boss 模式暗色环境）
     this._bossLight = null;
     this._introCamera = null;
+  }
+
+  /** True when a boss custom cinematic hook is controlling the camera this frame. */
+  isCustomCinematicActive() {
+    return this._bossCinematicActive;
+  }
+
+  /** Build the unified cinematic context passed to all hook calls. */
+  _makeCinematicContext() {
+    return {
+      bossPos: this.boss.position.clone(),
+      playerPos: this.player.position.clone(),
+      config: this._cinematicConfig,
+      camera: this._camera,
+      effects: this.effects,
+      explosion: this.explosion,
+      audio: this.audio,
+      hud: this.hud,
+      onShake: this.onShake,
+    };
   }
 
   start(player, arena, bossId = 'warden') {
@@ -192,14 +218,11 @@ export class BossBattleController {
     this.player.reset();
 
     // Capability-based cinematic hook: if boss handles its own intro, skip legacy
-    this._bossCinematicActive = false;
-    if (this.boss.onCinematicStart?.('intro', {
-      bossPos: this.boss.position.clone(),
-      playerPos: this.player.position.clone(),
-      config: this._cinematicConfig,
-    })) {
-      this._bossCinematicActive = true;
-    } else {
+    const ctx = this._makeCinematicContext();
+    const handled = this.boss.onCinematicStart?.('intro', ctx) === true;
+    this._bossCinematicCustom = handled;
+    this._bossCinematicActive = handled;
+    if (!handled) {
       // Legacy cinematic camera
       if (this._camera) {
         this.cameraDirector.startCinematic(this._camera, CINEMATIC.INTRO, {
@@ -265,14 +288,10 @@ export class BossBattleController {
 
     // Capability-based cinematic: let boss handle its own intro visuals
     if (this._bossCinematicActive) {
-      const stillActive = this.boss.onCinematicUpdate?.('intro', t, dtSafe, {
-        bossPos: this.boss.position.clone(),
-        playerPos: this.player.position.clone(),
-        config: cfg,
-        camera: this._camera,
-      });
+      const ctx = this._makeCinematicContext();
+      const stillActive = this.boss.onCinematicUpdate?.('intro', t, dtSafe, ctx);
       if (!stillActive) {
-        this.boss.onCinematicEnd?.('intro', { config: cfg });
+        this.boss.onCinematicEnd?.('intro', this._makeCinematicContext());
         this._bossCinematicActive = false;
       }
     }
@@ -283,8 +302,8 @@ export class BossBattleController {
     const healthAt = cfg.healthAt ?? 3.6;
     const fightAt = cfg.fightAt ?? 4.0;
 
-    // Legacy fallback cinematic (only if boss didn't handle it)
-    if (!this._bossCinematicActive) {
+    // Legacy fallback cinematic (only if boss didn't declare custom)
+    if (!this._bossCinematicCustom) {
       // Phase 1 (0~0.8s): Dark, rune lights up, fog gathers
       if (t < 0.8) {
         const tp = t / 0.8;
@@ -362,9 +381,10 @@ export class BossBattleController {
     if (t >= cfg.introDuration) {
       // End boss cinematic if still active
       if (this._bossCinematicActive) {
-        this.boss.onCinematicEnd?.('intro', { config: cfg });
+        this.boss.onCinematicEnd?.('intro', this._makeCinematicContext());
         this._bossCinematicActive = false;
       }
+      this._bossCinematicCustom = false;
       this.state = BOSS_STATE.PHASE1;
       this.timer = 0;
       this.startTime = performance.now();
@@ -421,14 +441,10 @@ export class BossBattleController {
 
     // Capability-based cinematic update
     if (this._bossCinematicActive) {
-      const stillActive = this.boss.onCinematicUpdate?.('phase_change', t, dtSafe, {
-        bossPos: this.boss.position.clone(),
-        playerPos: this.player.position.clone(),
-        config: cfg,
-        camera: this._camera,
-      });
+      const ctx = this._makeCinematicContext();
+      const stillActive = this.boss.onCinematicUpdate?.('phase_change', t, dtSafe, ctx);
       if (!stillActive) {
-        this.boss.onCinematicEnd?.('phase_change', { config: cfg });
+        this.boss.onCinematicEnd?.('phase_change', this._makeCinematicContext());
         this._bossCinematicActive = false;
       }
     }
@@ -441,9 +457,10 @@ export class BossBattleController {
 
     if (this.timer >= cfg.phaseChangeDuration) {
       if (this._bossCinematicActive) {
-        this.boss.onCinematicEnd?.('phase_change', { config: cfg });
+        this.boss.onCinematicEnd?.('phase_change', this._makeCinematicContext());
         this._bossCinematicActive = false;
       }
+      this._bossCinematicCustom = false;
       this.ai.setPhase2();
       this.state = BOSS_STATE.PHASE2;
       this.timer = 0;
@@ -458,15 +475,13 @@ export class BossBattleController {
     const cfg = this._cinematicConfig;
 
     // Capability-based cinematic hook
-    this._bossCinematicActive = false;
-    if (this.boss.onCinematicStart?.('phase_change', {
-      bossPos: this.boss.position.clone(),
-      playerPos: this.player.position.clone(),
-      config: cfg,
-    })) {
-      this._bossCinematicActive = true;
-    } else {
-      // Legacy phase change camera
+    const ctx = this._makeCinematicContext();
+    const handled = this.boss.onCinematicStart?.('phase_change', ctx) === true;
+    this._bossCinematicCustom = handled;
+    this._bossCinematicActive = handled;
+
+    if (!handled) {
+      // Legacy phase change camera + Warden explosion
       if (this._camera) {
         this.cameraDirector.startCinematic(this._camera, CINEMATIC.PHASE_CHANGE, {
           bossPos: this.boss.position.clone(),
@@ -474,16 +489,16 @@ export class BossBattleController {
           duration: cfg.phaseChangeDuration,
         });
       }
-    }
 
-    // Initial flash on phase change start
-    this.explosion.playMagicExplosion(
-      this.boss.headPosition,
-      1.5
-    );
-    this.audio.playExplosion(1.5, 8);
-    this.hud.screenFlash();
-    if (this.onShake) this.onShake(1.0);
+      // Legacy initial flash on phase change start
+      this.explosion.playMagicExplosion(
+        this.boss.headPosition,
+        1.5
+      );
+      this.audio.playExplosion(1.5, 8);
+      this.hud.screenFlash();
+      if (this.onShake) this.onShake(1.0);
+    }
   }
 
   _onBossDeath() {
@@ -499,14 +514,11 @@ export class BossBattleController {
     this.audio.fadeOutMusic(2.0);
 
     // Capability-based cinematic hook for death
-    this._bossCinematicActive = false;
-    if (this.boss.onCinematicStart?.('death', {
-      bossPos: this.boss.position.clone(),
-      playerPos: this.player.position.clone(),
-      config: cfg,
-    })) {
-      this._bossCinematicActive = true;
-    } else {
+    const ctx = this._makeCinematicContext();
+    const handled = this.boss.onCinematicStart?.('death', ctx) === true;
+    this._bossCinematicCustom = handled;
+    this._bossCinematicActive = handled;
+    if (!handled) {
       // Legacy death cinematic camera
       if (this._camera) {
         this.cameraDirector.startCinematic(this._camera, CINEMATIC.DEATH, {
@@ -525,24 +537,16 @@ export class BossBattleController {
 
     // Capability-based cinematic: let boss handle its own death visuals
     if (this._bossCinematicActive) {
-      const stillActive = this.boss.onCinematicUpdate?.('death', t, dtSafe, {
-        bossPos: this.boss.position.clone(),
-        playerPos: this.player.position.clone(),
-        config: cfg,
-        camera: this._camera,
-        explosion: this.explosion,
-        audio: this.audio,
-        hud: this.hud,
-        onShake: this.onShake,
-      });
+      const ctx = this._makeCinematicContext();
+      const stillActive = this.boss.onCinematicUpdate?.('death', t, dtSafe, ctx);
       if (!stillActive) {
-        this.boss.onCinematicEnd?.('death', { config: cfg });
+        this.boss.onCinematicEnd?.('death', this._makeCinematicContext());
         this._bossCinematicActive = false;
       }
     }
 
-    // Legacy death sequence (only if boss didn't handle it)
-    if (!this._bossCinematicActive) {
+    // Legacy death sequence (only if boss didn't declare custom)
+    if (!this._bossCinematicCustom) {
       // 0.5s: First small explosion
       if (t > 0.5 && !this._deathExploded1) {
         this._deathExploded1 = true;
@@ -605,9 +609,10 @@ export class BossBattleController {
     if (t > cfg.deathDuration && !this._resultShown) {
       this._resultShown = true;
       if (this._bossCinematicActive) {
-        this.boss.onCinematicEnd?.('death', { config: cfg });
+        this.boss.onCinematicEnd?.('death', this._makeCinematicContext());
         this._bossCinematicActive = false;
       }
+      this._bossCinematicCustom = false;
       this.cameraDirector.cancel();
       this._showResult(true);
     }
@@ -666,6 +671,7 @@ export class BossBattleController {
     this._resultShown = false;
     this._phase2TextShown = false;
     this._bossCinematicActive = false;
+    this._bossCinematicCustom = false;
     this.phase2Triggered = false;
     this._hideLoadingText();
     this.cinematicUI.clear();

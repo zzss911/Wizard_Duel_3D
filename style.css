@@ -1072,8 +1072,8 @@ html, body {
   animation: boss-hp-critical 0.5s ease-in-out infinite alternate;
 }
 @keyframes boss-hp-critical {
-  from { background: linear-gradient(90deg, #6a1010, #c82020, #ff4030); }
-  to { background: linear-gradient(90deg, #c82020, #ff4030, #ff6040); }
+  from { opacity: 0.6; }
+  to { opacity: 1; }
 }
 #boss-bar-phase {
   font-size: 13px; color: #c8a090; letter-spacing: 3px;
